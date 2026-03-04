@@ -1,30 +1,32 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { supabase, isMockMode } from '../lib/supabase';
+import {
+    calculatePassProbability,
+    calculateRecentAverage,
+    calculateWeakTopics,
+    calculateTopicMastery,
+    calculateStreak,
+    checkGuaranteeEligibility,
+    generateResultHash,
+    getStudyRecommendations,
+    EXAM_CONSTANTS,
+} from '../services/examEngine.js';
+import { TOPIC_LABELS } from '../data/mockExams';
 
 const STORAGE_KEY = 'life_in_uk_progress';
-
-const TOPIC_LABELS = {
-    values: 'Values & Principles',
-    geography: 'UK Geography',
-    history_early: 'Early History',
-    history_modern: 'Modern History',
-    government: 'Government & Law',
-    culture: 'Arts & Culture',
-    traditions: 'Traditions & Festivals',
-    sport: 'Sport',
-    science: 'Science & Invention',
-};
 
 const defaultState = {
     isPremium: false,
     completedChapters: [],
-    examResults: {},     // { examId: { score, passed, date, topicScores: { topic: { correct, total } } } }
+    examResults: {},     // { examId: { score, passed, date, topicScores, hash, attempt } }
     totalQuestions: 0,
     totalCorrect: 0,
-    // Guarantee data
-    examDate: null,                    // ISO date string of user's official test
-    milestonesCompletedAt: null,       // ISO timestamp when all milestones were first met
-    guaranteeClaimSubmitted: false,    // true after user submits claim
-    guaranteeClaimApproved: false,     // true after admin approves claim
+    examDate: null,
+    milestonesCompletedAt: null,
+    guaranteeClaimSubmitted: false,
+    guaranteeClaimApproved: false,
+    examAttempts: {},
+    lastActivityDate: null,
 };
 
 export function useProgress() {
@@ -37,6 +39,106 @@ export function useProgress() {
         }
     });
 
+    const [supabaseUser, setSupabaseUser] = useState(null);
+
+    // Listen for Supabase auth changes to get userId
+    useEffect(() => {
+        if (isMockMode || !supabase) return;
+
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            if (session?.user) {
+                setSupabaseUser(session.user);
+                loadProgressFromSupabase(session.user.id);
+            }
+        });
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            if (session?.user) {
+                setSupabaseUser(session.user);
+                loadProgressFromSupabase(session.user.id);
+            } else {
+                setSupabaseUser(null);
+            }
+        });
+
+        return () => subscription.unsubscribe();
+    }, []);
+
+    // Load historical results from Supabase
+    const loadProgressFromSupabase = useCallback(async (userId) => {
+        if (isMockMode || !supabase) return;
+
+        try {
+            const { data: attempts } = await supabase
+                .from('exam_attempts')
+                .select('*')
+                .eq('user_id', userId)
+                .order('completed_at', { ascending: true });
+
+            if (attempts && attempts.length > 0) {
+                const examResults = {};
+                const examAttempts = {};
+                let totalQuestions = 0;
+                let totalCorrect = 0;
+
+                attempts.forEach(a => {
+                    const attempt = (examAttempts[a.exam_id] || 0) + 1;
+                    examAttempts[a.exam_id] = attempt;
+
+                    examResults[a.exam_id] = {
+                        score: a.score,
+                        passed: a.passed,
+                        date: a.completed_at,
+                        topicScores: a.topic_breakdown || {},
+                        hash: a.integrity_hash,
+                        attempt,
+                    };
+
+                    totalQuestions += a.total_questions;
+                    totalCorrect += a.score;
+                });
+
+                setProgress(prev => ({
+                    ...prev,
+                    examResults,
+                    examAttempts,
+                    totalQuestions,
+                    totalCorrect,
+                    lastActivityDate: attempts[attempts.length - 1]?.completed_at,
+                }));
+            }
+
+            // Also load user premium status — check BOTH users table AND subscriptions
+            const { data: user } = await supabase
+                .from('users')
+                .select('is_premium, guarantee_claimed')
+                .eq('id', userId)
+                .single();
+
+            // Check for active Stripe subscription
+            const { data: activeSub } = await supabase
+                .from('subscriptions')
+                .select('status')
+                .eq('user_id', userId)
+                .in('status', ['active', 'trialing'])
+                .limit(1)
+                .maybeSingle();
+
+            const hasActiveStripeSubscription = activeSub?.status === 'active' || activeSub?.status === 'trialing';
+
+            if (user || hasActiveStripeSubscription) {
+                setProgress(prev => ({
+                    ...prev,
+                    isPremium: hasActiveStripeSubscription || user?.is_premium || prev.isPremium,
+                    guaranteeClaimSubmitted: user?.guarantee_claimed || prev.guaranteeClaimSubmitted,
+                }));
+            }
+        } catch (err) {
+            console.warn('Failed to load progress from Supabase:', err);
+        }
+    }, []);
+
+    // Persist to localStorage as fallback
     useEffect(() => {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
     }, [progress]);
@@ -51,130 +153,125 @@ export function useProgress() {
     };
 
     /**
-     * Save exam result with per-topic scoring.
-     * @param {number} examId
-     * @param {number} score
-     * @param {boolean} passed
-     * @param {Array} questions - array of { topic, correctAnswer } 
-     * @param {Object} answers - { questionId: selectedAnswer }
+     * Save exam result directly to the local cache after it was validated by the server.
      */
-    const saveExamResult = (examId, score, passed, questions = [], answers = {}) => {
-        // Build topic breakdown
-        const topicScores = {};
-        questions.forEach(q => {
-            const topic = q.topic || 'general';
-            if (!topicScores[topic]) topicScores[topic] = { correct: 0, total: 0 };
-            topicScores[topic].total++;
-            if (answers[q.id] === q.correctAnswer) topicScores[topic].correct++;
+    const saveExamResult = (examId, score, passed, serverData = null) => {
+        // Fallbacks for testing
+        const topicScores = serverData?.topicBreakdown || {};
+        const hash = serverData?.hash || generateResultHash(examId, score, {});
+
+        // Update local state
+        setProgress(p => {
+            const prevAttempts = p.examAttempts || {};
+            const attempt = (prevAttempts[examId] || 0) + 1;
+
+            return {
+                ...p,
+                totalQuestions: (p.totalQuestions || 0) + questions.length,
+                totalCorrect: (p.totalCorrect || 0) + score,
+                lastActivityDate: new Date().toISOString(),
+                examAttempts: { ...prevAttempts, [examId]: attempt },
+                examResults: {
+                    ...p.examResults,
+                    [examId]: {
+                        score,
+                        passed,
+                        date: new Date().toISOString(),
+                        topicScores,
+                        hash,
+                        attempt,
+                    },
+                },
+            };
         });
 
-        setProgress(p => ({
-            ...p,
-            totalQuestions: (p.totalQuestions || 0) + questions.length,
-            totalCorrect: (p.totalCorrect || 0) + score,
-            examResults: {
-                ...p.examResults,
-                [examId]: { score, passed, date: new Date().toISOString(), topicScores },
-            },
-        }));
+        return { score, passed };
     };
 
-    const getPassProbability = () => {
-        const results = Object.values(progress.examResults);
-        if (results.length === 0) return 0;
-        const passes = results.filter(r => r.passed).length;
-        const avgScore = results.reduce((acc, r) => acc + r.score, 0) / (results.length * 24);
-        const baseWinRate = (passes / results.length) * 100;
-        const scoreFactor = avgScore * 100;
-        return Math.min(Math.round(baseWinRate * 0.7 + scoreFactor * 0.3), 99);
-    };
+    // ── Derived metrics ──────────────────────────────────────
+    const getPassProbability = () => calculatePassProbability(progress.examResults || {});
+    const getWeakTopics = (n = 5) => calculateWeakTopics(progress.examResults || {}, n);
+    const getTopicMastery = () => calculateTopicMastery(progress.examResults || {});
+    const getRecentAverage = (n = 5) => calculateRecentAverage(progress.examResults || {}, n);
+    const getStreak = () => calculateStreak(progress.examResults || {});
+    const getStudyRecs = () => getStudyRecommendations(progress.examResults || {});
 
-    /**
-     * Returns top N weakest topics sorted by accuracy ascending.
-     * Only considers topics that have been encountered.
-     */
-    const getWeakTopics = (n = 5) => {
-        const totals = {}; // topic -> { correct, total }
-        Object.values(progress.examResults).forEach(result => {
-            if (!result.topicScores) return;
-            Object.entries(result.topicScores).forEach(([topic, scores]) => {
-                if (!totals[topic]) totals[topic] = { correct: 0, total: 0 };
-                totals[topic].correct += scores.correct;
-                totals[topic].total += scores.total;
-            });
-        });
-
-        return Object.entries(totals)
-            .filter(([, s]) => s.total >= 1)
-            .map(([topic, s]) => ({
-                topic,
-                label: TOPIC_LABELS[topic] || topic,
-                correct: s.correct,
-                total: s.total,
-                accuracy: Math.round((s.correct / s.total) * 100),
-            }))
-            .sort((a, b) => a.accuracy - b.accuracy)
-            .slice(0, n);
-    };
-
-    /**
-     * Returns the average score for the last N exams.
-     */
-    const getRecentAverage = (n = 5) => {
-        const sorted = Object.values(progress.examResults)
-            .sort((a, b) => new Date(b.date) - new Date(a.date))
-            .slice(0, n);
-        if (sorted.length === 0) return 0;
-        const avg = sorted.reduce((acc, r) => acc + (r.score / 24) * 100, 0) / sorted.length;
-        return Math.round(avg);
-    };
-
-    /**
-     * Returns whether user has completed all 30 mocks with an average ≥ 85% for last 5.
-     * Used for Pass Guarantee eligibility check.
-     */
-    // Set user's official exam date
+    // ── Guarantee ────────────────────────────────────────────
     const setExamDate = (dateStr) => {
         setProgress(p => ({ ...p, examDate: dateStr }));
     };
 
-    // Mark guarantee claim as submitted
     const setGuaranteeClaimSubmitted = () => {
         setProgress(p => ({ ...p, guaranteeClaimSubmitted: true }));
     };
 
-    // Mark guarantee claim as approved (admin use)
     const setGuaranteeClaimApproved = () => {
         setProgress(p => ({ ...p, guaranteeClaimApproved: true }));
     };
 
-    /**
-     * Returns whether user has completed all eligibility milestones:
-     * - Active premium
-     * - All 30 mocks done
-     * - Last 5 average >= 85%
-     * Note: no 90-day window restriction.
-     */
     const isGuaranteeEligible = () => {
-        const taken = Object.keys(progress.examResults).length;
-        if (!progress.isPremium) return false;
-        if (taken < 30) return false;
-        return getRecentAverage(5) >= 85;
+        const result = checkGuaranteeEligibility(progress);
+        return result.eligible;
     };
 
-    // Track milestones_completed_at automatically when conditions are first met
+    const getGuaranteeStatus = () => checkGuaranteeEligibility(progress);
+
+    /**
+     * Submit guarantee claim via server-side validation
+     */
+    const submitGuaranteeClaim = async () => {
+        const userId = supabaseUser?.id;
+        if (!userId) return { success: false, reason: 'Not logged in' };
+
+        try {
+            const res = await fetch('/.netlify/functions/validateGuarantee', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId,
+                    examDate: progress.examDate,
+                }),
+            });
+
+            const result = await res.json();
+
+            if (result.eligible && result.claimSubmitted) {
+                setGuaranteeClaimSubmitted();
+                return { success: true, message: result.message };
+            }
+
+            return { success: false, reason: result.reason || 'Not eligible' };
+        } catch (err) {
+            console.warn('Guarantee validation failed:', err);
+            return { success: false, reason: 'Server error. Please try again.' };
+        }
+    };
+
+    // ── Milestones auto-track ────────────────────────────────
     const taken = Object.keys(progress.examResults || {}).length;
     useEffect(() => {
         if (
             progress.isPremium &&
-            taken >= 30 &&
-            getRecentAverage(5) >= 85 &&
+            taken >= EXAM_CONSTANTS.GUARANTEE_REQUIRED_MOCKS &&
+            calculateRecentAverage(progress.examResults || {}, EXAM_CONSTANTS.GUARANTEE_RECENT_COUNT) >= EXAM_CONSTANTS.GUARANTEE_REQUIRED_AVG &&
             !progress.milestonesCompletedAt
         ) {
             setProgress(p => ({ ...p, milestonesCompletedAt: new Date().toISOString() }));
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [progress.isPremium, taken, progress.milestonesCompletedAt]);
+
+    // ── Score history for charts ─────────────────────────────
+    const getScoreHistory = () => {
+        return Object.entries(progress.examResults || {})
+            .map(([id, result]) => ({
+                examId: id,
+                score: result.score,
+                percentage: Math.round((result.score / EXAM_CONSTANTS.QUESTIONS_PER_EXAM) * 100),
+                passed: result.passed,
+                date: result.date,
+            }))
+            .sort((a, b) => new Date(a.date) - new Date(b.date));
+    };
 
     return {
         progress,
@@ -183,11 +280,18 @@ export function useProgress() {
         saveExamResult,
         getPassProbability,
         getWeakTopics,
+        getTopicMastery,
         getRecentAverage,
+        getStreak,
+        getStudyRecs,
+        getScoreHistory,
         isGuaranteeEligible,
+        getGuaranteeStatus,
         setExamDate,
         setGuaranteeClaimSubmitted,
         setGuaranteeClaimApproved,
+        submitGuaranteeClaim,
         TOPIC_LABELS,
+        EXAM_CONSTANTS,
     };
 }

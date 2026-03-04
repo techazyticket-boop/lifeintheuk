@@ -1,12 +1,19 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { mockExams, questionBank } from '../data/mockExams';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { mockExams, chapterExams, questionBank } from '../data/mockExams';
 import { useProgress } from '../hooks/useProgress';
 import { useAuth } from '../context/AuthContext';
-import { ArrowLeft, CheckCircle, XCircle, Award, BookOpen, Clock, Zap, RotateCcw, BarChart2 } from 'lucide-react';
+import {
+    createSessionShuffler,
+    saveExamSession,
+    loadExamSession,
+    clearExamSession,
+    EXAM_CONSTANTS,
+} from '../services/examEngine';
+import { ArrowLeft, CheckCircle, XCircle, Award, BookOpen, Clock, Zap, RotateCcw, BarChart2, AlertTriangle, TrendingUp, Share2 } from 'lucide-react';
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'];
-const EXAM_MINUTES = 45;
+const EXAM_MINUTES = EXAM_CONSTANTS.EXAM_DURATION_MINUTES;
 
 // ── Timer display ─────────────────────────────────────────────
 function TimerBadge({ seconds, timed }) {
@@ -17,118 +24,47 @@ function TimerBadge({ seconds, timed }) {
     );
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
-    const isLow = seconds < 300; // < 5 mins
+    const isLow = seconds < 300;
+    const isCritical = seconds < 60;
     return (
         <span style={{
             fontSize: '0.9rem',
             fontWeight: 700,
-            color: isLow ? '#ef4444' : 'var(--text-secondary)',
+            color: isCritical ? '#dc2626' : isLow ? '#ef4444' : 'var(--text-secondary)',
             display: 'flex',
             alignItems: 'center',
             gap: 4,
             padding: isLow ? '4px 8px' : '0',
             borderRadius: isLow ? 'var(--radius-md)' : '0',
-            background: isLow ? 'rgba(239, 68, 68, 0.15)' : 'transparent',
-            border: isLow ? '1px solid rgba(239, 68, 68, 0.3)' : 'border: 1px solid transparent',
-            transition: 'all 0.3s ease'
+            background: isCritical ? 'rgba(220, 38, 38, 0.2)' : isLow ? 'rgba(239, 68, 68, 0.15)' : 'transparent',
+            border: isLow ? `1px solid ${isCritical ? 'rgba(220,38,38,0.5)' : 'rgba(239, 68, 68, 0.3)'}` : '1px solid transparent',
+            transition: 'all 0.3s ease',
+            animation: isCritical ? 'pulse 1s infinite' : 'none',
         }}>
-            <Clock size={14} color={isLow ? '#ef4444' : 'var(--text-muted)'} />
+            <Clock size={14} color={isCritical ? '#dc2626' : isLow ? '#ef4444' : 'var(--text-muted)'} />
             {m}:{s.toString().padStart(2, '0')}
         </span>
-    );
-}
-
-// ── Mode picker shown before exam starts ─────────────────────
-function ModePicker({ exam, onStart }) {
-    const [mode, setMode] = useState('timed');
-    return (
-        <div className="container slide-up" style={{ padding: 'var(--space-2xl) 0', maxWidth: 600, margin: '0 auto', textAlign: 'center' }}>
-            <div className="glass-panel">
-                <div style={{ fontSize: '2.5rem', marginBottom: 'var(--space-md)' }}>📝</div>
-                <h2 style={{ marginBottom: 'var(--space-xs)' }}>{exam.title}</h2>
-                <p style={{ color: 'var(--text-muted)', marginBottom: 'var(--space-xl)', fontSize: '0.9rem' }}>
-                    24 questions · Pass mark 75% (18/24)
-                </p>
-                <div style={{ display: 'flex', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)', justifyContent: 'center' }}>
-                    {[
-                        { id: 'timed', icon: '⏱️', label: 'Timed Exam', sub: '45 min · Real conditions' },
-                        { id: 'study', icon: '📖', label: 'Study Mode', sub: 'No time limit' },
-                    ].map(opt => (
-                        <button
-                            key={opt.id}
-                            onClick={() => setMode(opt.id)}
-                            style={{
-                                flex: 1, padding: 'var(--space-lg)', borderRadius: 'var(--radius-lg)', cursor: 'pointer',
-                                border: `2px solid ${mode === opt.id ? 'var(--accent-primary)' : 'var(--border-color)'}`,
-                                background: mode === opt.id ? 'rgba(59,130,246,0.1)' : 'rgba(255,255,255,0.04)',
-                                color: 'var(--text-primary)', textAlign: 'center', transition: 'all 0.2s',
-                                fontFamily: 'inherit',
-                            }}
-                        >
-                            <div style={{ fontSize: '2rem', marginBottom: 8 }}>{opt.icon}</div>
-                            <div style={{ fontWeight: 700 }}>{opt.label}</div>
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 4 }}>{opt.sub}</div>
-                        </button>
-                    ))}
-                </div>
-                <button className="btn btn-primary" style={{ width: '100%', fontSize: '1.05rem', padding: 'var(--space-md)' }} onClick={() => onStart(mode)}>
-                    Start {mode === 'timed' ? 'Timed Exam' : 'Study Mode'} →
-                </button>
-            </div>
-        </div>
     );
 }
 
 export default function ExamViewer() {
     const { id } = useParams();
     const navigate = useNavigate();
-    const { progress, saveExamResult } = useProgress();
+    const { progress, saveExamResult, getStudyRecs, getPassProbability, getRecentAverage } = useProgress();
     const { user } = useAuth();
 
     const isChapterExam = String(id).startsWith('chap-');
 
     const exam = useMemo(() => {
         if (isChapterExam) {
-            const CHAPTERS = [
-                { id: 'chap-1', title: 'Chapter 1 Practice', topics: ['values'] },
-                { id: 'chap-2', title: 'Chapter 2 Practice', topics: ['geography'] },
-                { id: 'chap-3', title: 'Chapter 3 Practice', topics: ['history_early', 'history_modern', 'science'] },
-                { id: 'chap-4', title: 'Chapter 4 Practice', topics: ['culture', 'traditions', 'sport'] },
-                { id: 'chap-5', title: 'Chapter 5 Practice', topics: ['government'] },
-            ];
-            const chap = CHAPTERS.find(c => c.id === id);
-            if (!chap) return null;
-            const chapQs = questionBank.filter(q => chap.topics.includes(q.topic));
-            // Deterministic shuffle for this session
-            let s = 12345;
-            const rand = () => { const x = Math.sin(s++) * 10000; return x - Math.floor(x); };
-            const shuffled = [...chapQs].sort(() => 0.5 - rand()).slice(0, 24);
-
-            return {
-                id: id,
-                title: chap.title,
-                isPremium: ['chap-3', 'chap-4', 'chap-5'].includes(id),
-                passThreshold: Math.max(1, Math.floor(shuffled.length * 0.75)),
-                questions: shuffled.map((q, i) => {
-                    const isTrueFalse = q.opts.length === 2 && q.opts.map(o => o.toUpperCase()).includes('TRUE');
-                    return {
-                        id: `cq-${id}-${i}`,
-                        question: q.q,
-                        options: isTrueFalse ? ['TRUE', 'FALSE'] : q.opts,
-                        correctAnswer: q.a,
-                        explanation: q.e,
-                        topic: q.topic,
-                        isTrueFalse
-                    };
-                })
-            };
+            return chapterExams.find(c => c.id === id);
         }
         return mockExams.find(e => e.id === Number(id));
     }, [id, isChapterExam]);
 
     const isPremium = progress.isPremium || (user && user.isPremium);
 
-    // All exams → timed only (45 min, real conditions). Mode picker removed.
+    // ── Session persistence (anti-cheat: survives refresh) ────
     const [mode, setMode] = useState('timed');
     const [currentIndex, setCurrentIndex] = useState(0);
     const [answers, setAnswers] = useState({});
@@ -138,35 +74,132 @@ export default function ExamViewer() {
 
     // One random seed per session — options re-order on every page load
     const sessionSeed = useRef(Math.floor(Math.random() * 100000));
+    const sessionShuffle = useMemo(
+        () => createSessionShuffler(sessionSeed.current),
+        []
+    );
 
-    // Fisher-Yates with seed — deterministic for this session only
-    const sessionShuffle = (arr, extraSeed) => {
-        const a = [...arr];
-        let s = sessionSeed.current + extraSeed;
-        const rand = () => { const x = Math.sin(s++) * 10000; return x - Math.floor(x); };
-        for (let i = a.length - 1; i > 0; i--) {
-            const j = Math.floor(rand() * (i + 1));
-            [a[i], a[j]] = [a[j], a[i]];
+    // ── Restore session on mount (anti-cheat) ────────────────
+    const sessionRestored = useRef(false);
+    useEffect(() => {
+        if (sessionRestored.current || !exam) return;
+        sessionRestored.current = true;
+
+        const saved = loadExamSession(exam.id);
+        if (saved && !saved.isFinished) {
+            setAnswers(saved.answers || {});
+            setCurrentIndex(saved.currentIndex || 0);
+            setSecondsLeft(saved.secondsLeft || EXAM_MINUTES * 60);
+            setMode(saved.mode || 'timed');
+            sessionSeed.current = saved.sessionSeed || sessionSeed.current;
         }
-        return a;
-    };
+    }, [exam]);
+
+    // ── Persist session on every change (anti-cheat) ─────────
+    useEffect(() => {
+        if (!exam || isFinished) return;
+        saveExamSession(exam.id, {
+            answers,
+            currentIndex,
+            secondsLeft,
+            mode,
+            sessionSeed: sessionSeed.current,
+            isFinished: false,
+        });
+    }, [answers, currentIndex, secondsLeft, mode, exam, isFinished]);
+
+    // Shuffle question ORDER per session (anti-cheat)
+    const questionOrder = useMemo(() => {
+        if (!exam) return [];
+        const indices = exam.questions.map((_, i) => i);
+        return sessionShuffle(indices, 999);
+    }, [exam, sessionShuffle]);
 
     // Shuffle options per-session (True/False questions keep TRUE first, FALSE second)
     const shuffledQuestions = useMemo(() => {
         if (!exam) return [];
-        return exam.questions.map((q, qi) => ({
-            ...q,
-            options: q.isTrueFalse ? ['TRUE', 'FALSE'] : sessionShuffle(q.options, qi * 37),
-        }));
+        return questionOrder.map((origIdx, displayIdx) => {
+            const q = exam.questions[origIdx];
+            if (q.isTrueFalse) {
+                return { ...q, options: ['TRUE', 'FALSE'], _origIdx: origIdx };
+            }
+            const shuffledOpts = sessionShuffle(q.options.map((opt, i) => ({ opt, origIndex: i })), displayIdx * 37);
+            return {
+                ...q,
+                options: shuffledOpts.map(s => s.opt),
+                _optionMapping: shuffledOpts.map(s => s.origIndex), // maps display index -> original index
+                _origIdx: origIdx,
+            };
+        });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [exam?.id]);  // only recalculate when exam changes, not on every render
+    }, [exam?.id, sessionShuffle, questionOrder]);
 
     // Start/stop timer based on mode
+    const finishExamRef = useRef(null);
+
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [serverResult, setServerResult] = useState(null);
+
+    const finishExam = useCallback(async () => {
+        clearInterval(timerRef.current);
+        setIsSubmitting(true);
+        window.scrollTo(0, 0);
+
+        // Build answers map in original indices
+        const mappedAnswers = {};
+        shuffledQuestions.forEach(q => {
+            const sel = answers[q.id];
+            if (sel !== undefined && sel !== null) {
+                if (q._optionMapping) {
+                    mappedAnswers[q.id] = q._optionMapping[sel];
+                } else {
+                    mappedAnswers[q.id] = sel;
+                }
+            }
+        });
+
+        try {
+            const res = await fetch('/api/validateExam', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    examId: exam.id,
+                    answers: mappedAnswers,
+                    userId: user?.id || null
+                })
+            });
+            const data = await res.json();
+
+            // Re-map results to local progress cache format
+            saveExamResult(exam.id, data.score, data.passed, {
+                passed: data.passed,
+                score: data.score,
+                percentage: data.percentage,
+                topicBreakdown: data.topicBreakdown
+            });
+
+            clearExamSession(exam.id);
+            setServerResult(data);
+            setIsFinished(true);
+            setIsSubmitting(false);
+        } catch (e) {
+            console.error('Validation failed', e);
+            alert('Failed to submit exam. Please try again or check your connection.');
+            setIsSubmitting(false);
+        }
+    }, [answers, exam, shuffledQuestions, saveExamResult, user]);
+
+    finishExamRef.current = finishExam;
+
     useEffect(() => {
         if (mode !== 'timed' || isFinished) return;
         timerRef.current = setInterval(() => {
             setSecondsLeft(prev => {
-                if (prev <= 1) { clearInterval(timerRef.current); finishExam(); return 0; }
+                if (prev <= 1) {
+                    clearInterval(timerRef.current);
+                    finishExamRef.current();
+                    return 0;
+                }
                 return prev - 1;
             });
         }, 1000);
@@ -177,13 +210,10 @@ export default function ExamViewer() {
 
     if (!exam) return <div className="container" style={{ padding: 'var(--space-2xl) 0' }}><p>Exam Not Found</p></div>;
     if (exam.isPremium && !isPremium) { navigate('/pricing'); return null; }
-    // Free exams: mode is pre-set to 'timed' — mode picker never shown
-    // Premium exams: premium users see mode picker
-    if (!mode) return <ModePicker exam={exam} onStart={m => setMode(m)} />;
 
-    const handleSelect = (questionId, option) => {
-        if (answers[questionId]) return;
-        setAnswers(prev => ({ ...prev, [questionId]: option }));
+    const handleSelect = (questionId, displayIndex) => {
+        if (answers[questionId] !== undefined) return;
+        setAnswers(prev => ({ ...prev, [questionId]: displayIndex }));
     };
 
     const handleNext = () => {
@@ -194,22 +224,18 @@ export default function ExamViewer() {
         }
     };
 
-    const finishExam = () => {
-        clearInterval(timerRef.current);
-        let score = 0;
-        shuffledQuestions.forEach(q => { if (answers[q.id] === q.correctAnswer) score++; });
-        const passed = score >= exam.passThreshold;
-        saveExamResult(exam.id, score, passed, shuffledQuestions, answers);
-        setIsFinished(true);
-        window.scrollTo(0, 0);
-    };
+    if (isSubmitting) {
+        return (
+            <div className="container slide-up" style={{ padding: 'var(--space-2xl) 0', textAlign: 'center' }}>
+                <div style={{ marginBottom: 'var(--space-lg)', display: 'inline-flex', justifyContent: 'center', width: 48, height: 48, border: '4px solid rgba(255,255,255,0.1)', borderTopColor: 'var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+                <h2>Scoring Your Exam...</h2>
+            </div>
+        );
+    }
 
     // ── Results screen ────────────────────────────────────────
-    if (isFinished) {
-        let score = 0;
-        exam.questions.forEach(q => { if (answers[q.id] === q.correctAnswer) score++; });
-        const passed = score >= exam.passThreshold;
-        const pct = Math.round((score / exam.questions.length) * 100);
+    if (isFinished && serverResult) {
+        const { score, percentage: pct, passed, topicBreakdown } = serverResult;
 
         // ── 5 Official handbook chapters ──────────────────────────
         const CHAPTERS = [
@@ -221,31 +247,81 @@ export default function ExamViewer() {
         ];
 
         const chapterStats = CHAPTERS.map(ch => {
-            const qs = exam.questions.filter(q => ch.topics.includes(q.topic || ''));
-            const correct = qs.filter(q => answers[q.id] === q.correctAnswer).length;
-            return { ...ch, total: qs.length, correct, acc: qs.length ? Math.round((correct / qs.length) * 100) : null };
+            let correct = 0;
+            let total = 0;
+            ch.topics.forEach(t => {
+                if (topicBreakdown[t]) {
+                    correct += topicBreakdown[t].correct;
+                    total += topicBreakdown[t].total;
+                }
+            });
+            return {
+                ...ch,
+                total,
+                correct,
+                acc: total > 0 ? Math.round((correct / total) * 100) : null
+            };
         });
         const chaptersFocused = chapterStats.filter(c => c.total > 0 && c.acc < 75).sort((a, b) => a.acc - b.acc);
 
         // ── Fine-grained topic breakdown ─────────────────────────
-        const topicMap = {};
-        exam.questions.forEach(q => {
-            const t = q.topic || 'general';
-            if (!topicMap[t]) topicMap[t] = { label: t, correct: 0, total: 0 };
-            topicMap[t].total++;
-            if (answers[q.id] === q.correctAnswer) topicMap[t].correct++;
-        });
-        const topicBreakdown = Object.values(topicMap).sort((a, b) => (a.correct / a.total) - (b.correct / b.total));
-
         const TOPIC_LABELS = {
             values: 'Values & Principles', geography: 'UK Geography',
             history_early: 'Early History', history_modern: 'Modern History',
             government: 'Government & Law', culture: 'Arts & Culture',
             traditions: 'Traditions & Festivals', sport: 'Sport', science: 'Science & Invention',
         };
+        const topicBreakdownArr = Object.entries(topicBreakdown).map(([k, v]) => ({ label: k, correct: v.correct, total: v.total }))
+            .sort((a, b) => (a.correct / a.total) - (b.correct / b.total));
+
+        // ── AI Study Recommendations ─────────────────────────────
+        const studyRecs = getStudyRecs();
 
         return (
             <div className="container slide-up" style={{ padding: 'var(--space-2xl) 0', maxWidth: '700px' }}>
+                {
+                    (!isPremium && String(exam.id) === '3') && (
+                        <div style={{
+                            padding: 'var(--space-2xl)',
+                            background: 'linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1))',
+                            border: '1px solid rgba(139,92,246,0.5)',
+                            borderRadius: 'var(--radius-lg)',
+                            textAlign: 'center',
+                            marginBottom: 'var(--space-2xl)'
+                        }}>
+                            <Star size={48} color="var(--accent-secondary)" style={{ margin: '0 auto var(--space-md)' }} />
+                            <h2 style={{ fontSize: '2rem', marginBottom: 'var(--space-sm)' }}>You've completed all free mock exams.</h2>
+
+                            <div style={{
+                                display: 'inline-block', background: 'rgba(0,0,0,0.3)', padding: 'var(--space-md) var(--space-xl)',
+                                borderRadius: 'var(--radius-md)', margin: 'var(--space-md) auto var(--space-lg)'
+                            }}>
+                                <div style={{ fontSize: '1.2rem', marginBottom: 8, color: 'var(--text-secondary)' }}>
+                                    Your average score: <strong style={{ color: 'white' }}>{getRecentAverage(5)}%</strong>
+                                </div>
+                                <div style={{ fontSize: '1.2rem', color: 'var(--text-secondary)' }}>
+                                    Estimated pass probability: <strong style={{ color: getPassProbability() >= 75 ? 'var(--success)' : 'var(--warning)' }}>{getPassProbability()}%</strong>
+                                </div>
+                            </div>
+
+                            <p style={{ color: 'var(--warning)', fontSize: '1.1rem', marginBottom: 'var(--space-xl)', fontWeight: 600 }}>
+                                Most people scoring below 75% fail the real Life in the UK test.
+                            </p>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 1fr) minmax(200px, 1fr)', gap: 'var(--space-md)', textAlign: 'left', background: 'rgba(0,0,0,0.2)', padding: 'var(--space-lg)', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-xl)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><CheckCircle size={18} color="var(--success)" /> 30 full mock exams</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><CheckCircle size={18} color="var(--success)" /> Weak topic analysis</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><CheckCircle size={18} color="var(--success)" /> Pass probability tracking</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><CheckCircle size={18} color="var(--success)" /> Pass guarantee eligibility</div>
+                            </div>
+
+                            <button className="btn btn-primary" style={{ padding: '16px 32px', fontSize: '1.2rem' }} onClick={() => navigate('/pricing')}>
+                                Unlock Full Course
+                            </button>
+                        </div>
+                    )
+                }
+
                 {/* Score card */}
                 <div className="glass-panel" style={{ textAlign: 'center', marginBottom: 'var(--space-xl)' }}>
                     <div style={{
@@ -261,7 +337,7 @@ export default function ExamViewer() {
                         {pct}%
                     </div>
                     <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-xs)' }}>
-                        <strong style={{ color: 'white' }}>{score} / {exam.questions.length}</strong> correct · Pass mark: 18/24 (75%)
+                        <strong style={{ color: 'white' }}>{score} / {shuffledQuestions.length}</strong> correct · Pass mark: 18/24 (75%)
                     </p>
                     {mode === 'timed' && (
                         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: 'var(--space-lg)' }}>
@@ -276,14 +352,67 @@ export default function ExamViewer() {
                             <span>0%</span><span style={{ color: 'var(--warning)' }}>75% pass mark</span><span>100%</span>
                         </div>
                     </div>
+                    {/* Share Score */}
+                    <button className="btn btn-secondary" style={{ gap: 8, marginBottom: 'var(--space-lg)' }} onClick={() => {
+                        const text = `🇬🇧 I scored ${score}/${shuffledQuestions.length} (${pct}%) on the Life in the UK mock exam!\nCan you beat me? Try it free:`;
+                        const url = window.location.origin + '/life-in-the-uk-practice-test';
+                        if (navigator.share) {
+                            navigator.share({ title: 'Life in the UK Practice Test', text, url }).catch(() => { });
+                        } else {
+                            navigator.clipboard.writeText(`${text}\n${url}`).then(() => alert('Score copied to clipboard!')).catch(() => { });
+                        }
+                    }}>
+                        <Share2 size={16} /> Share Your Score
+                    </button>
+
                     <div className="flex gap-md justify-center" style={{ flexWrap: 'wrap' }}>
                         <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>Dashboard</button>
                         <button className="btn btn-secondary" onClick={() => navigate('/exams')}>All Exams</button>
-                        <button className="btn btn-primary" onClick={() => { setAnswers({}); setIsFinished(false); setCurrentIndex(0); setSecondsLeft(EXAM_MINUTES * 60); setMode(null); }}>
+                        <button className="btn btn-primary" onClick={() => {
+                            clearExamSession(exam.id);
+                            setAnswers({});
+                            setIsFinished(false);
+                            setCurrentIndex(0);
+                            setSecondsLeft(EXAM_MINUTES * 60);
+                            sessionSeed.current = Math.floor(Math.random() * 100000);
+                        }}>
                             <RotateCcw size={16} /> Retry
                         </button>
                     </div>
                 </div>
+
+                {/* ── AI Study Recommendations ── */}
+                {studyRecs.recommendations.length > 0 && (
+                    <div className="glass-panel" style={{ marginBottom: 'var(--space-xl)', borderColor: 'rgba(139,92,246,0.3)' }}>
+                        <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-xs)', fontSize: '1.1rem' }}>
+                            <TrendingUp size={18} color="var(--accent-secondary)" /> AI Study Recommendations
+                        </h3>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: 'var(--space-md)' }}>
+                            {studyRecs.message}
+                        </p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                            {studyRecs.recommendations.slice(0, 5).map((rec, i) => {
+                                const prioColor = rec.priority === 'high' ? 'var(--danger)' : rec.priority === 'medium' ? 'var(--warning)' : 'var(--success)';
+                                const prioLabel = rec.priority === 'high' ? '🔴 Focus' : rec.priority === 'medium' ? '🟡 Review' : '🟢 Strong';
+                                return (
+                                    <div key={i} style={{
+                                        padding: 'var(--space-sm) var(--space-md)',
+                                        background: `rgba(${rec.priority === 'high' ? '239,68,68' : rec.priority === 'medium' ? '245,158,11' : '16,185,129'},0.06)`,
+                                        border: `1px solid ${prioColor}33`,
+                                        borderRadius: 'var(--radius-md)',
+                                        display: 'flex', alignItems: 'center', gap: 'var(--space-md)',
+                                    }}>
+                                        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: prioColor, flexShrink: 0 }}>{prioLabel}</span>
+                                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', flex: 1 }}>{rec.action}</span>
+                                        {rec.accuracy !== undefined && (
+                                            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: prioColor, flexShrink: 0 }}>{rec.accuracy}%</span>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
 
                 {/* ── 5-Chapter Handbook Breakdown ── */}
                 <div className="glass-panel" style={{ marginBottom: 'var(--space-xl)' }}>
@@ -349,8 +478,8 @@ export default function ExamViewer() {
                         <BarChart2 size={18} color="var(--accent-primary)" /> Topic Breakdown
                     </h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
-                        {topicBreakdown.map(t => {
-                            const acc = Math.round((t.correct / t.total) * 100);
+                        {topicBreakdownArr.map(t => {
+                            const acc = t.total > 0 ? Math.round((t.correct / t.total) * 100) : 0;
                             const color = acc >= 75 ? 'var(--success)' : acc >= 50 ? 'var(--warning)' : 'var(--danger)';
                             return (
                                 <div key={t.label}>
@@ -374,7 +503,7 @@ export default function ExamViewer() {
     // ── Exam in progress ──────────────────────────────────────
     const currentQ = shuffledQuestions[currentIndex];
     const progressPercent = (currentIndex / shuffledQuestions.length) * 100;
-    const hasAnswered = !!answers[currentQ.id];
+    const answeredPercent = (Object.keys(answers).length / shuffledQuestions.length) * 100;
 
     return (
         <div className="container slide-up" style={{ padding: 'var(--space-xl) 0', maxWidth: '800px' }}>
@@ -391,8 +520,15 @@ export default function ExamViewer() {
             </div>
 
             {/* Progress bar */}
-            <div className="progress-container" style={{ marginBottom: 'var(--space-xl)', height: 5 }}>
-                <div className="progress-bar" style={{ width: progressPercent + '%' }} />
+            <div style={{ marginBottom: 'var(--space-md)', position: 'relative' }}>
+                <div className="progress-container" style={{ height: 5 }}>
+                    <div className="progress-bar" style={{ width: progressPercent + '%' }} />
+                </div>
+                {/* Answered indicator */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    <span>{Object.keys(answers).length}/{shuffledQuestions.length} answered</span>
+                    <span>{Math.round(answeredPercent)}% complete</span>
+                </div>
             </div>
 
             {/* Question card */}
@@ -413,66 +549,46 @@ export default function ExamViewer() {
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
                     {currentQ.options.map((opt, i) => {
-                        const isSelected = answers[currentQ.id] === opt;
-                        const isCorrect = opt === currentQ.correctAnswer;
+                        const isSelected = answers[currentQ.id] === i;
                         let borderColor = 'rgba(255,255,255,0.1)', bgColor = 'rgba(255,255,255,0.04)';
-                        let labelBg = 'rgba(255,255,255,0.1)', labelColor = 'var(--text-muted)', icon = null;
+                        let labelBg = 'rgba(255,255,255,0.1)', labelColor = 'var(--text-muted)';
 
-                        if (hasAnswered) {
-                            if (isCorrect) {
-                                borderColor = 'var(--success)'; bgColor = 'rgba(16,185,129,0.12)';
-                                labelBg = 'rgba(16,185,129,0.3)'; labelColor = 'var(--success)';
-                                icon = <CheckCircle size={20} color="var(--success)" />;
-                            } else if (isSelected) {
-                                borderColor = 'var(--danger)'; bgColor = 'rgba(239,68,68,0.12)';
-                                labelBg = 'rgba(239,68,68,0.3)'; labelColor = 'var(--danger)';
-                                icon = <XCircle size={20} color="var(--danger)" />;
-                            }
-                        } else if (isSelected) {
+                        if (isSelected) {
                             borderColor = 'var(--accent-primary)'; bgColor = 'rgba(59,130,246,0.12)';
                             labelBg = 'rgba(59,130,246,0.3)'; labelColor = 'var(--accent-primary)';
                         }
 
                         return (
                             <button key={i}
-                                onClick={() => handleSelect(currentQ.id, opt)}
-                                disabled={hasAnswered}
+                                onClick={() => handleSelect(currentQ.id, i)}
+                                disabled={isSubmitting}
                                 style={{
                                     width: '100%', display: 'flex', alignItems: 'center', gap: 'var(--space-md)',
                                     padding: 'var(--space-md) var(--space-lg)', borderRadius: 'var(--radius-md)',
                                     border: '2px solid ' + borderColor, background: bgColor,
                                     color: 'var(--text-primary)', fontSize: '0.95rem', fontWeight: 500,
-                                    textAlign: 'left', cursor: hasAnswered ? 'default' : 'pointer',
+                                    textAlign: 'left', cursor: isSubmitting ? 'default' : 'pointer',
                                     transition: 'all 0.15s ease', fontFamily: 'inherit',
                                 }}
-                                onMouseEnter={e => { if (!hasAnswered) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.3)'; }}
-                                onMouseLeave={e => { if (!hasAnswered && !isSelected) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+                                onMouseEnter={e => { if (!isSelected) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.3)'; }}
+                                onMouseLeave={e => { if (!isSelected) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
                             >
                                 <span style={{ width: 32, height: 32, borderRadius: 'var(--radius-sm)', background: labelBg, color: labelColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.85rem', flexShrink: 0, transition: 'all 0.15s' }}>
                                     {OPTION_LABELS[i]}
                                 </span>
                                 <span style={{ flex: 1 }}>{opt}</span>
-                                {icon}
                             </button>
                         );
                     })}
                 </div>
 
-                {/* Explanation */}
-                {hasAnswered && (
-                    <div className="fade-in" style={{ padding: 'var(--space-md) var(--space-lg)', background: 'rgba(59,130,246,0.07)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(59,130,246,0.2)', marginBottom: 'var(--space-lg)' }}>
-                        <strong style={{ color: 'var(--accent-primary)', display: 'block', marginBottom: 4, fontSize: '0.82rem' }}>💡 Explanation</strong>
-                        <span style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>{currentQ.explanation}</span>
-                    </div>
-                )}
-
-                {/* Nav */}
+                {/* Nav — Next disabled until answered (locked navigation) */}
                 <div className="flex justify-between items-center" style={{ paddingTop: 'var(--space-md)', borderTop: '1px solid var(--border-color)' }}>
-                    <button className="btn btn-secondary" onClick={() => setCurrentIndex(p => Math.max(0, p - 1))} disabled={currentIndex === 0} style={{ opacity: currentIndex === 0 ? 0.3 : 1 }}>
+                    <button className="btn btn-secondary" onClick={() => setCurrentIndex(p => Math.max(0, p - 1))} disabled={currentIndex === 0 || isSubmitting} style={{ opacity: currentIndex === 0 ? 0.3 : 1 }}>
                         ← Previous
                     </button>
-                    <button className="btn btn-primary" onClick={handleNext} disabled={!hasAnswered} style={{ opacity: !hasAnswered ? 0.4 : 1 }}>
-                        {currentIndex === shuffledQuestions.length - 1 ? '🏁 Finish Exam' : 'Next →'}
+                    <button className="btn btn-primary" onClick={handleNext} disabled={answers[currentQ.id] === undefined || isSubmitting} style={{ opacity: answers[currentQ.id] === undefined ? 0.4 : 1 }}>
+                        {currentIndex === shuffledQuestions.length - 1 ? '🏁 Submit Exam' : 'Next →'}
                     </button>
                 </div>
             </div>

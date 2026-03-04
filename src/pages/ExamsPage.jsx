@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { mockExams } from '../data/mockExams';
 import { useProgress } from '../hooks/useProgress';
 import { useAuth } from '../context/AuthContext';
+import { EXAM_CONSTANTS } from '../services/examEngine';
 import { CheckCircle, Lock, Play, Star } from 'lucide-react';
 
 export default function ExamsPage() {
@@ -16,7 +17,7 @@ export default function ExamsPage() {
                 <Link to="/dashboard" style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>← Back to Dashboard</Link>
                 <h2 style={{ marginTop: 'var(--space-md)', marginBottom: 'var(--space-xs)' }}>All Mock Exams</h2>
                 <p style={{ color: 'var(--text-secondary)' }}>
-                    24 questions per exam · 45 minutes · 18/24 to pass (75%)
+                    {EXAM_CONSTANTS.QUESTIONS_PER_EXAM} questions per exam · {EXAM_CONSTANTS.EXAM_DURATION_MINUTES} minutes · {EXAM_CONSTANTS.PASS_THRESHOLD}/{EXAM_CONSTANTS.QUESTIONS_PER_EXAM} to pass ({EXAM_CONSTANTS.PASS_PERCENTAGE}%)
                 </p>
             </div>
 
@@ -25,6 +26,7 @@ export default function ExamsPage() {
                     const result = progress.examResults[exam.id];
                     const isLocked = exam.isPremium && !isPremium;
                     const isFree = !exam.isPremium;
+                    const attempt = progress.examAttempts?.[exam.id] || 0;
 
                     return (
                         <Link
@@ -78,8 +80,9 @@ export default function ExamsPage() {
                                             )}
                                         </div>
                                         <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                                            24 questions · 45 minutes
-                                            {result && ` · Last score: ${result.score}/24`}
+                                            {EXAM_CONSTANTS.QUESTIONS_PER_EXAM} questions · {EXAM_CONSTANTS.EXAM_DURATION_MINUTES} minutes
+                                            {result && ` · Last score: ${result.score}/${EXAM_CONSTANTS.QUESTIONS_PER_EXAM}`}
+                                            {attempt > 0 && ` · Attempt ${attempt}`}
                                         </span>
                                     </div>
                                 </div>
@@ -92,7 +95,7 @@ export default function ExamsPage() {
                                                 fontSize: '1.5rem', fontWeight: 800,
                                                 color: result.passed ? 'var(--success)' : 'var(--danger)'
                                             }}>
-                                                {Math.round((result.score / 24) * 100)}%
+                                                {Math.round((result.score / EXAM_CONSTANTS.QUESTIONS_PER_EXAM) * 100)}%
                                             </div>
                                             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                                                 {result.passed ? '✓ Passed' : '✗ Failed'}

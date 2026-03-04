@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useProgress } from '../hooks/useProgress';
+import { useSubscription } from '../hooks/useSubscription';
 import {
     ShieldCheck, Check, LockOpen, Star, Mail,
-    KeyRound, Tag, Loader2, ArrowRight, LogIn, Gift, Zap, Calendar
+    KeyRound, Tag, Loader2, ArrowRight, LogIn, Gift, Zap, Calendar,
+    CreditCard, ExternalLink, AlertCircle
 } from 'lucide-react';
 
 // ── Plans ─────────────────────────────────────────────────────
@@ -129,15 +131,27 @@ function PlanCard({ plan, selected, onSelect }) {
 
 export default function Pricing() {
     const navigate = useNavigate();
-    const { user, pendingOtp, requestOtp, verifyOtp, applyPromoCode, completePurchase, logout } = useAuth();
+    const [searchParams] = useSearchParams();
+    const { user, requestOtp, verifyOtp, applyPromoCode, completePurchase, logout, isMockMode, refreshPremiumStatus } = useAuth();
     const { progress, unlockPremium } = useProgress();
+
+    // Stripe subscription hook
+    const {
+        isActive: hasStripeSubscription,
+        checkoutLoading,
+        startCheckout,
+        refreshSubscription,
+        currentPlan: stripePlan,
+        periodEnd,
+        daysRemaining,
+    } = useSubscription(user?.id, user?.email);
 
     const [selectedPlan, setSelectedPlan] = useState('monthly');
     const plan = PLANS.find(p => p.id === selectedPlan);
 
-    // step 1 = email, step 2 = OTP, step 3 = subscribe/promo/success
+    // step 1 = email, step 2 = OTP, step 3 = subscribe/promo, step 4 = success
     const [step, setStep] = useState(() => {
-        if (user && user.isPremium) return 4;
+        if (user && (user.isPremium || hasStripeSubscription)) return 4;
         if (user) return 3;
         return 1;
     });
@@ -151,17 +165,53 @@ export default function Pricing() {
     const [promoSuccess, setPromoSuccess] = useState(false);
     const [loading, setLoading] = useState(false);
     const [displayedOtp, setDisplayedOtp] = useState(null);
-    const [purchased, setPurchased] = useState(false);
+    const [checkoutError, setCheckoutError] = useState('');
+    const [appliedPromo, setAppliedPromo] = useState(null);
+
+    // ── Handle Stripe checkout return ─────────────────────────
+    useEffect(() => {
+        const status = searchParams.get('status');
+        const sessionId = searchParams.get('session_id');
+
+        if (status === 'success' && sessionId) {
+            // User returned from Stripe — refresh subscription status
+            setStep(4);
+            refreshSubscription();
+            if (refreshPremiumStatus) refreshPremiumStatus();
+            unlockPremium();
+
+            // Clean URL params
+            window.history.replaceState({}, '', '/pricing');
+        } else if (status === 'cancelled') {
+            setStep(user ? 3 : 1);
+            window.history.replaceState({}, '', '/pricing');
+        }
+    }, [searchParams]);
+
+    // ── Sync step when user state changes ─────────────────────
+    useEffect(() => {
+        if (user && (user.isPremium || hasStripeSubscription)) {
+            setStep(4);
+        } else if (user && step < 3) {
+            setStep(3);
+        }
+    }, [user, hasStripeSubscription]);
 
     // Already premium
-    if (progress.isPremium || (user && user.isPremium)) {
+    if (progress.isPremium || (user && user.isPremium) || hasStripeSubscription) {
         return (
             <div className="container slide-up" style={{ textAlign: 'center', padding: 'var(--space-2xl) 0', maxWidth: 500, margin: '0 auto' }}>
                 <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', border: '2px solid var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto var(--space-lg)' }}>
                     <ShieldCheck size={40} color="var(--success)" />
                 </div>
                 <h1 style={{ marginBottom: 'var(--space-sm)' }}>You Have Premium Access!</h1>
-                {user && <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 'var(--space-md)' }}>Logged in as <strong style={{ color: 'var(--text-secondary)' }}>{user.email}</strong></p>}
+                {user && <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 'var(--space-sm)' }}>Logged in as <strong style={{ color: 'var(--text-secondary)' }}>{user.email}</strong></p>}
+                {stripePlan && (
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: 'var(--space-md)' }}>
+                        Plan: <strong style={{ color: 'var(--accent-primary)', textTransform: 'capitalize' }}>{stripePlan}</strong>
+                        {daysRemaining !== null && ` · Renews in ${daysRemaining} day${daysRemaining !== 1 ? 's' : ''}`}
+                    </p>
+                )}
                 <p style={{ color: 'var(--text-secondary)', fontSize: '1.05rem', marginBottom: 'var(--space-xl)' }}>
                     Full access to all 30 mock exams, the study handbook and the pass guarantee.
                 </p>
@@ -170,52 +220,85 @@ export default function Pricing() {
         );
     }
 
-    // Step 1: Email
-    const handleEmailSubmit = () => {
+    const handleEmailSubmit = async () => {
         const trimmed = email.trim();
         if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
             setEmailError('Please enter a valid email address.');
             return;
         }
         setEmailError('');
-        const generated = requestOtp(trimmed);
-        setDisplayedOtp(generated);
+        setLoading(true);
+        const result = await requestOtp(trimmed);
+        setLoading(false);
+        if (!result.success) {
+            setEmailError(result.message || 'Failed to send login email.');
+            return;
+        }
+        if (result.mockMode) {
+            setDisplayedOtp(result.otp);
+        } else {
+            setDisplayedOtp(null);
+        }
         setStep(2);
     };
 
-    // Step 2: OTP
-    const handleOtpSubmit = () => {
-        if (otp.trim().length !== 6) { setOtpError('Enter the 6-digit code shown above.'); return; }
+    const handleOtpSubmit = async () => {
+        if (otp.trim().length !== 6) { setOtpError('Enter the 6-digit code.'); return; }
         setOtpError('');
         setLoading(true);
-        setTimeout(() => {
-            const result = verifyOtp(otp.trim());
-            setLoading(false);
-            if (!result.success) { setOtpError(result.reason || 'Incorrect code.'); return; }
-            if (result.isPremium) { unlockPremium(); setStep(4); } else { setStep(3); }
-        }, 800);
+        const result = await verifyOtp(otp.trim(), { email: email.trim() });
+        setLoading(false);
+        if (!result.success) { setOtpError(result.reason || 'Incorrect code.'); return; }
+        if (result.isPremium) { unlockPremium(); setStep(4); } else { setStep(3); }
     };
 
     // Step 3a: Promo
-    const handlePromoSubmit = () => {
+    const handlePromoSubmit = async () => {
         setPromoError('');
-        const result = applyPromoCode(promoCode);
+        setLoading(true);
+        const result = await applyPromoCode(promoCode);
+        setLoading(false);
         if (!result.success) { setPromoError(result.reason || 'Invalid promo code.'); return; }
-        unlockPremium();
-        setPromoSuccess(true);
-        setTimeout(() => setStep(4), 1200);
+
+        if (result.type === 'full') {
+            unlockPremium();
+            setPromoSuccess(true);
+            setTimeout(() => setStep(4), 1200);
+        } else if (result.type === 'percentage') {
+            setAppliedPromo({
+                promoId: result.promoId,
+                value: result.value,
+                message: result.message
+            });
+            setPromoSuccess(true);
+        }
     };
 
-    // Step 3b: Subscribe
-    const handleSubscribe = () => {
-        setLoading(true);
-        setTimeout(() => {
-            completePurchase();
-            unlockPremium();
-            setLoading(false);
-            setPurchased(true);
-            setTimeout(() => setStep(4), 1000);
-        }, 1800);
+    // Step 3b: Stripe Checkout
+    const handleStripeCheckout = async () => {
+        setCheckoutError('');
+
+        if (isMockMode) {
+            // Mock mode: simulate payment
+            setLoading(true);
+            setTimeout(() => {
+                completePurchase();
+                unlockPremium();
+                setLoading(false);
+                setStep(4);
+            }, 1800);
+            return;
+        }
+
+        // Real Stripe Checkout
+        const result = await startCheckout(selectedPlan, {
+            discountValue: appliedPromo ? appliedPromo.value : null,
+            promoId: appliedPromo ? appliedPromo.promoId : null,
+        });
+
+        if (!result.success) {
+            setCheckoutError(result.error || 'Failed to start checkout. Please try again.');
+        }
     };
 
     const currentEmail = user ? user.email : email;
@@ -261,23 +344,32 @@ export default function Pricing() {
                                 We'll send a one-time code to verify your email. Existing subscribers are detected automatically.
                             </p>
                             <InputField icon={Mail} placeholder="your@email.com" type="email" value={email} onChange={e => setEmail(e.target.value)} error={emailError} />
-                            <button className="btn btn-primary" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }} onClick={handleEmailSubmit}>
-                                Continue <ArrowRight size={16} />
+                            <button className="btn btn-primary" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }} onClick={handleEmailSubmit} disabled={loading}>
+                                {loading ? <Loader2 size={18} className="spin" /> : <>Continue <ArrowRight size={16} /></>}
                             </button>
                         </div>
                     )}
 
-                    {/* ─ Step 2: OTP ─ */}
                     {step === 2 && (
                         <div>
                             <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 'var(--space-md)' }}>
-                                A verification code has been sent to <strong style={{ color: 'white' }}>{email}</strong>
+                                {displayedOtp
+                                    ? <>A verification code has been sent to <strong style={{ color: 'white' }}>{email}</strong></>
+                                    : <>We've sent a login link to <strong style={{ color: 'white' }}>{email}</strong>. Check your inbox and click the link, or enter the 6-digit code below.</>
+                                }
                             </p>
-                            <div style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.4)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', marginBottom: 'var(--space-lg)', textAlign: 'center' }}>
-                                <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.08em' }}>📬 Your verification code</p>
-                                <div style={{ fontSize: '2.2rem', fontWeight: 900, letterSpacing: '0.3em', color: 'var(--success)', fontFamily: 'monospace' }}>{displayedOtp}</div>
-                                <p style={{ color: 'var(--text-muted)', fontSize: '0.7rem', marginTop: 4 }}>(In production this would be emailed to you)</p>
-                            </div>
+                            {displayedOtp ? (
+                                <div style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.4)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', marginBottom: 'var(--space-lg)', textAlign: 'center' }}>
+                                    <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.08em' }}>📬 Your verification code</p>
+                                    <div style={{ fontSize: '2.2rem', fontWeight: 900, letterSpacing: '0.3em', color: 'var(--success)', fontFamily: 'monospace' }}>{displayedOtp}</div>
+                                    <p style={{ color: 'var(--text-muted)', fontSize: '0.7rem', marginTop: 4 }}>(Development mode — in production this is emailed)</p>
+                                </div>
+                            ) : (
+                                <div style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', marginBottom: 'var(--space-lg)', textAlign: 'center' }}>
+                                    <p style={{ color: 'var(--accent-primary)', fontSize: '0.85rem', fontWeight: 600 }}>📧 Check your email for a login link</p>
+                                    <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginTop: 4 }}>Can't find it? Check your spam folder, or enter the 6-digit code below.</p>
+                                </div>
+                            )}
                             <InputField icon={KeyRound} placeholder="Enter 6-digit code" value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} error={otpError} />
                             <button className="btn btn-primary" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }} onClick={handleOtpSubmit} disabled={loading}>
                                 {loading ? <Loader2 size={18} className="spin" /> : <><LogIn size={16} /> Verify Code</>}
@@ -288,7 +380,7 @@ export default function Pricing() {
                         </div>
                     )}
 
-                    {/* ─ Step 3: Plan select + subscribe ─ */}
+                    {/* ─ Step 3: Plan select + Stripe Checkout ─ */}
                     {step === 3 && (
                         <div>
                             <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 'var(--space-lg)' }}>
@@ -304,19 +396,46 @@ export default function Pricing() {
                                 {plan.billingNote} · Cancel anytime from your account settings
                             </p>
 
-                            {/* Subscribe button */}
-                            {purchased ? (
-                                <div style={{ textAlign: 'center' }}>
-                                    <div style={{ fontSize: '2rem' }}>🎉</div>
-                                    <p style={{ color: 'var(--success)', fontWeight: 700 }}>Payment successful!</p>
+                            {/* Checkout error */}
+                            {checkoutError && (
+                                <div style={{
+                                    background: 'rgba(239,68,68,0.1)',
+                                    border: '1px solid rgba(239,68,68,0.3)',
+                                    borderRadius: 'var(--radius-md)',
+                                    padding: 'var(--space-sm) var(--space-md)',
+                                    marginBottom: 'var(--space-md)',
+                                    display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
+                                }}>
+                                    <AlertCircle size={16} color="var(--danger)" />
+                                    <span style={{ color: 'var(--danger)', fontSize: '0.85rem' }}>{checkoutError}</span>
                                 </div>
-                            ) : (
-                                <button className="btn btn-primary" style={{ width: '100%', marginBottom: 'var(--space-lg)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontSize: '1.05rem', padding: 'var(--space-md)' }} onClick={handleSubscribe} disabled={loading}>
-                                    {loading
-                                        ? <><Loader2 size={18} className="spin" /> Processing Secure Payment...</>
-                                        : <><LockOpen size={18} /> Subscribe — {plan.price}/{plan.period}</>}
-                                </button>
                             )}
+
+                            {/* Subscribe button — redirects to Stripe */}
+                            <button
+                                className="btn btn-primary"
+                                style={{
+                                    width: '100%', marginBottom: 'var(--space-lg)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    gap: 8, fontSize: '1.05rem', padding: 'var(--space-md)'
+                                }}
+                                onClick={handleStripeCheckout}
+                                disabled={loading || checkoutLoading}
+                            >
+                                {(loading || checkoutLoading)
+                                    ? <><Loader2 size={18} className="spin" /> Redirecting to Secure Checkout...</>
+                                    : <><CreditCard size={18} /> Subscribe — {appliedPromo ? `Discounted ${appliedPromo.value}%` : `${plan.price}/${plan.period}`}</>}
+                            </button>
+
+                            {/* Stripe trust badge */}
+                            <div style={{
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)',
+                            }}>
+                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                    🔒 Powered by <strong>Stripe</strong> — bank-level security
+                                </span>
+                            </div>
 
                             {/* Promo code divider */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>
@@ -328,7 +447,9 @@ export default function Pricing() {
                             {promoSuccess ? (
                                 <div style={{ textAlign: 'center', padding: 'var(--space-md)', background: 'rgba(16,185,129,0.1)', borderRadius: 'var(--radius-md)', border: '1px solid var(--success)' }}>
                                     <Gift size={24} color="var(--success)" style={{ marginBottom: 4 }} />
-                                    <p style={{ color: 'var(--success)', fontWeight: 700, margin: 0 }}>Promo code applied! Unlocking premium…</p>
+                                    <p style={{ color: 'var(--success)', fontWeight: 700, margin: 0 }}>
+                                        {appliedPromo ? appliedPromo.message : 'Promo code applied! Unlocking premium…'}
+                                    </p>
                                 </div>
                             ) : (
                                 <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
@@ -414,7 +535,7 @@ export default function Pricing() {
                     </div>
 
                     <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-                        🔒 Secure checkout · Recurring card payment · Cancel anytime · Instant access
+                        🔒 Secure checkout powered by Stripe · Recurring card payment · Cancel anytime · Instant access
                     </p>
                 </div>
             </div>

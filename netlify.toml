@@ -1,0 +1,20 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[dev]
+  command = "npm run dev"
+  targetPort = 5173
+
+# SPA fallback — must be LAST redirect
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# SEO-friendly URL
+[[redirects]]
+  from = "/life-in-the-uk-practice-test"
+  to = "/index.html"
+  status = 200
