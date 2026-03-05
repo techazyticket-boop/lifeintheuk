@@ -9,7 +9,7 @@ import { CheckCircle, Lock, Play, Star } from 'lucide-react';
 export default function ExamsPage() {
     const { progress } = useProgress();
     const { user } = useAuth();
-    const isPremium = progress.isPremium || (user && user.isPremium);
+    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
 
     return (
         <div className="container slide-up" style={{ padding: 'var(--space-xl) 0' }}>

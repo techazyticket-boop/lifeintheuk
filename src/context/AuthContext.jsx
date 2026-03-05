@@ -53,6 +53,7 @@ export function AuthProvider({ children }) {
                     setUser(null);
                     localStorage.removeItem(AUTH_KEY);
                     localStorage.removeItem(SUBS_KEY);
+                    localStorage.removeItem('life_in_uk_progress');
                     window.location.href = '/';
                 }
             }
@@ -258,6 +259,7 @@ export function AuthProvider({ children }) {
         setUser(null);
         localStorage.removeItem(AUTH_KEY);
         localStorage.removeItem(SUBS_KEY);
+        localStorage.removeItem('life_in_uk_progress');
         window.location.href = '/';
     };
 

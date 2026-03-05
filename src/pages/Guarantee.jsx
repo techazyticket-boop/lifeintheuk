@@ -281,7 +281,7 @@ export default function Guarantee() {
     const [dateError, setDateError] = useState('');
     const [dateSaved, setDateSaved] = useState(!!progress.examDate);
 
-    const isPremium = progress.isPremium || (user && user.isPremium);
+    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
     const examsTaken = Object.keys(progress.examResults || {}).length;
     const recentAvg = getRecentAverage(5);
     const allMocksDone = examsTaken >= 30;

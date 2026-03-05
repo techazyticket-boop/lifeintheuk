@@ -45,7 +45,7 @@ export default function Dashboard() {
         isGuaranteeEligible, TOPIC_LABELS, EXAM_CONSTANTS: EC,
     } = useProgress();
     const { user } = useAuth();
-    const isPremium = progress.isPremium || (user && user.isPremium);
+    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
 
     const examsTaken = Object.keys(progress.examResults || {}).length;
     const passProbability = getPassProbability();

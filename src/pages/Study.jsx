@@ -18,7 +18,7 @@ export default function Study() {
     const { progress } = useProgress();
     const { user } = useAuth();
     const navigate = useNavigate();
-    const isPremium = progress.isPremium || (user && user.isPremium);
+    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
     const completedCount = progress.completedChapters.length;
     const totalCount = studyMaterials.length;
 

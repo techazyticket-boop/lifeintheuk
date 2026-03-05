@@ -198,7 +198,8 @@ export default function Pricing() {
     }, [user, hasStripeSubscription]);
 
     // Already premium
-    if (progress.isPremium || (user && user.isPremium) || hasStripeSubscription) {
+    const isPremiumStatus = (user && progress.isPremium) || (user && user.isPremium) || hasStripeSubscription;
+    if (isPremiumStatus) {
         return (
             <div className="container slide-up" style={{ textAlign: 'center', padding: 'var(--space-2xl) 0', maxWidth: 500, margin: '0 auto' }}>
                 <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', border: '2px solid var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto var(--space-lg)' }}>

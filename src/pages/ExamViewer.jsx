@@ -62,7 +62,7 @@ export default function ExamViewer() {
         return mockExams.find(e => e.id === Number(id));
     }, [id, isChapterExam]);
 
-    const isPremium = progress.isPremium || (user && user.isPremium);
+    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
 
     // ── Session persistence (anti-cheat: survives refresh) ────
     const [mode, setMode] = useState('timed');

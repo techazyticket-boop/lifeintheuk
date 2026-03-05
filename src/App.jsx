@@ -342,7 +342,7 @@ function Layout({ children }) {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
-    const isPremium = progress.isPremium || (user && user.isPremium);
+    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
     const [menuOpen, setMenuOpen] = useState(false);
 
     // Close menu on route change
@@ -485,7 +485,7 @@ function ProtectedRoute({ children }) {
         return <div style={{ padding: 'var(--space-2xl)', textAlign: 'center', color: 'var(--text-muted)' }}>Verifying access...</div>;
     }
 
-    const isPremium = progress.isPremium || (user && user.isPremium);
+    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
 
     if (!user || !isPremium) {
         return <Navigate to="/pricing" replace />;
