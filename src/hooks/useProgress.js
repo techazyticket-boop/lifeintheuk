@@ -219,7 +219,7 @@ export function useProgress() {
     /**
      * Submit guarantee claim via server-side validation
      */
-    const submitGuaranteeClaim = async () => {
+    const submitGuaranteeClaim = async ({ examDate, proofUrl }) => {
         const userId = supabaseUser?.id;
         if (!userId) return { success: false, reason: 'Not logged in' };
 
@@ -229,7 +229,8 @@ export function useProgress() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     userId,
-                    examDate: progress.examDate,
+                    examDate: examDate || progress.examDate,
+                    proofUrl,
                 }),
             });
 

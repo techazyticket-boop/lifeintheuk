@@ -68,6 +68,7 @@ export default function ExamViewer() {
     const [mode, setMode] = useState('timed');
     const [currentIndex, setCurrentIndex] = useState(0);
     const [answers, setAnswers] = useState({});
+    const [confidences, setConfidences] = useState({});
     const [isFinished, setIsFinished] = useState(false);
     const [secondsLeft, setSecondsLeft] = useState(EXAM_MINUTES * 60);
     const timerRef = useRef(null);
@@ -88,6 +89,7 @@ export default function ExamViewer() {
         const saved = loadExamSession(exam.id);
         if (saved && !saved.isFinished) {
             setAnswers(saved.answers || {});
+            setConfidences(saved.confidences || {});
             setCurrentIndex(saved.currentIndex || 0);
             setSecondsLeft(saved.secondsLeft || EXAM_MINUTES * 60);
             setMode(saved.mode || 'timed');
@@ -100,13 +102,14 @@ export default function ExamViewer() {
         if (!exam || isFinished) return;
         saveExamSession(exam.id, {
             answers,
+            confidences,
             currentIndex,
             secondsLeft,
             mode,
             sessionSeed: sessionSeed.current,
             isFinished: false,
         });
-    }, [answers, currentIndex, secondsLeft, mode, exam, isFinished]);
+    }, [answers, confidences, currentIndex, secondsLeft, mode, exam, isFinished]);
 
     // Shuffle question ORDER per session (anti-cheat)
     const questionOrder = useMemo(() => {
@@ -147,6 +150,8 @@ export default function ExamViewer() {
 
         // Build answers map in original indices
         const mappedAnswers = {};
+        const durationSeconds = (EXAM_MINUTES * 60) - secondsLeft;
+
         shuffledQuestions.forEach(q => {
             const sel = answers[q.id];
             if (sel !== undefined && sel !== null) {
@@ -159,12 +164,14 @@ export default function ExamViewer() {
         });
 
         try {
-            const res = await fetch('/api/validateExam', {
+            const res = await fetch('/.netlify/functions/validateExam', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     examId: exam.id,
                     answers: mappedAnswers,
+                    confidences: confidences,
+                    durationSeconds: durationSeconds,
                     userId: user?.id || null
                 })
             });
@@ -208,12 +215,47 @@ export default function ExamViewer() {
 
     useEffect(() => { window.scrollTo(0, 0); }, [currentIndex]);
 
+    const [cooldownRemaining, setCooldownRemaining] = useState(0);
+
+    useEffect(() => {
+        // Enforce 5 minute cooldown
+        const lastExams = Object.values(progress.examResults || {}).sort((a, b) => new Date(b.date) - new Date(a.date));
+        if (lastExams.length > 0 && !isFinished) {
+            const lastExamTime = new Date(lastExams[0].date).getTime();
+            const now = new Date().getTime();
+            const diffSeconds = Math.floor((now - lastExamTime) / 1000);
+            if (diffSeconds < 300) { // 5 minutes
+                setCooldownRemaining(300 - diffSeconds);
+            }
+        }
+    }, [progress.examResults, isFinished]);
+
     if (!exam) return <div className="container" style={{ padding: 'var(--space-2xl) 0' }}><p>Exam Not Found</p></div>;
     if (exam.isPremium && !isPremium) { navigate('/pricing'); return null; }
+
+    if (cooldownRemaining > 0 && mode === 'timed') {
+        return (
+            <div className="container slide-up" style={{ padding: 'var(--space-2xl) 0', textAlign: 'center' }}>
+                <Clock size={48} color="var(--warning)" style={{ margin: '0 auto var(--space-md)' }} />
+                <h2>Cooldown Active</h2>
+                <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)' }}>
+                    To prevent exam spamming and encourage meaningful study, there is a 5-minute cooldown between mock exams.
+                </p>
+                <div style={{ fontSize: '2rem', fontWeight: 900, color: 'var(--warning)', marginBottom: 'var(--space-lg)' }}>
+                    {Math.floor(cooldownRemaining / 60)}m {cooldownRemaining % 60}s
+                </div>
+                <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>Return to Dashboard</button>
+            </div>
+        );
+    }
 
     const handleSelect = (questionId, displayIndex) => {
         if (answers[questionId] !== undefined) return;
         setAnswers(prev => ({ ...prev, [questionId]: displayIndex }));
+    };
+
+    const handleConfidence = (questionId, level) => {
+        setConfidences(prev => ({ ...prev, [questionId]: level }));
     };
 
     const handleNext = () => {
@@ -235,7 +277,11 @@ export default function ExamViewer() {
 
     // ── Results screen ────────────────────────────────────────
     if (isFinished && serverResult) {
-        const { score, percentage: pct, passed, topicBreakdown } = serverResult;
+        const { score, percentage: pct, passed, topicBreakdown, results: questionResults, isValidForGuarantee } = serverResult;
+
+        // ── Check if explanations are unlocked (30 mins passed or next exam taken) ──
+        const examFinishTime = new Date(serverResult.date || Date.now()).getTime();
+        const explanationsUnlocked = (Date.now() - examFinishTime) > 30 * 60 * 1000;
 
         // ── 5 Official handbook chapters ──────────────────────────
         const CHAPTERS = [
@@ -495,6 +541,36 @@ export default function ExamViewer() {
                         })}
                     </div>
                 </div>
+
+                {/* ── Explanations ── */}
+                <div className="glass-panel" style={{ marginTop: 'var(--space-xl)' }}>
+                    <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-lg)', fontSize: '1.1rem' }}>
+                        <BookOpen size={18} color="var(--accent-primary)" /> Answer Explanations
+                    </h3>
+                    {!explanationsUnlocked && (
+                        <div style={{ padding: 'var(--space-md)', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 'var(--radius-md)', color: 'var(--warning)', fontSize: '0.9rem' }}>
+                            <AlertTriangle size={16} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />
+                            To encourage deep learning and prevent instant memorization, explanations unlock 30 minutes after exam completion. Check back later!
+                        </div>
+                    )}
+                    {explanationsUnlocked && questionResults && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+                            {questionResults.map((qr, index) => {
+                                const isCorrect = qr.isCorrect;
+                                return (
+                                    <div key={index} style={{ padding: 'var(--space-sm)', borderBottom: '1px solid var(--border-color)' }}>
+                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 4 }}>
+                                            <span style={{ color: isCorrect ? 'var(--success)' : 'var(--danger)', fontWeight: 700 }}>{isCorrect ? '✓ Correct' : '✗ Incorrect'}</span>
+                                        </div>
+                                        <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)', marginBottom: 4 }}>
+                                            {qr.explanation}
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    )}
+                </div>
             </div>
         );
     }
@@ -582,12 +658,23 @@ export default function ExamViewer() {
                     })}
                 </div>
 
+                {answers[currentQ.id] !== undefined && confidences[currentQ.id] === undefined && (
+                    <div className="fade-in" style={{ padding: 'var(--space-md)', marginTop: 'var(--space-md)', background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                        <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: 'var(--space-md)', textAlign: 'center' }}>How confident are you in this answer?</p>
+                        <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'center', flexWrap: 'wrap' }}>
+                            <button className="btn btn-secondary" onClick={() => handleConfidence(currentQ.id, 'low')} style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}>Not sure</button>
+                            <button className="btn btn-secondary" onClick={() => handleConfidence(currentQ.id, 'medium')} style={{ borderColor: 'var(--warning)', color: 'var(--warning)' }}>Fairly sure</button>
+                            <button className="btn btn-secondary" onClick={() => handleConfidence(currentQ.id, 'high')} style={{ borderColor: 'var(--success)', color: 'var(--success)' }}>Very confident</button>
+                        </div>
+                    </div>
+                )}
+
                 {/* Nav — Next disabled until answered (locked navigation) */}
-                <div className="flex justify-between items-center" style={{ paddingTop: 'var(--space-md)', borderTop: '1px solid var(--border-color)' }}>
+                <div className="flex justify-between items-center" style={{ paddingTop: 'var(--space-md)', borderTop: '1px solid var(--border-color)', marginTop: 'var(--space-lg)' }}>
                     <button className="btn btn-secondary" onClick={() => setCurrentIndex(p => Math.max(0, p - 1))} disabled={currentIndex === 0 || isSubmitting} style={{ opacity: currentIndex === 0 ? 0.3 : 1 }}>
                         ← Previous
                     </button>
-                    <button className="btn btn-primary" onClick={handleNext} disabled={answers[currentQ.id] === undefined || isSubmitting} style={{ opacity: answers[currentQ.id] === undefined ? 0.4 : 1 }}>
+                    <button className="btn btn-primary" onClick={handleNext} disabled={answers[currentQ.id] === undefined || confidences[currentQ.id] === undefined || isSubmitting} style={{ opacity: (answers[currentQ.id] === undefined || confidences[currentQ.id] === undefined) ? 0.4 : 1 }}>
                         {currentIndex === shuffledQuestions.length - 1 ? '🏁 Submit Exam' : 'Next →'}
                     </button>
                 </div>

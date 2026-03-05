@@ -21,7 +21,7 @@ export async function handler(event) {
     }
 
     try {
-        const { userId, examDate } = JSON.parse(event.body);
+        const { userId, examDate, proofUrl } = JSON.parse(event.body);
 
         if (!userId) {
             return { statusCode: 400, body: JSON.stringify({ error: 'Missing userId' }) };
@@ -62,6 +62,29 @@ export async function handler(event) {
                         eligible: false,
                         reason: 'Active Premium subscription required.',
                         checks: { hasSubscription: false },
+                    }),
+                };
+            }
+            // Enforce Rule 4: Premium active >= 14 days
+            if (activeSub?.created_at && (new Date() - new Date(activeSub.created_at)) < 14 * 24 * 60 * 60 * 1000) {
+                return {
+                    statusCode: 200,
+                    body: JSON.stringify({
+                        eligible: false,
+                        reason: 'Premium subscription must be active for at least 14 days.',
+                        checks: { hasSubscription: true, premiumDuration: false },
+                    }),
+                };
+            }
+        } else {
+            // users.is_premium path
+            if (user.premium_start && (new Date() - new Date(user.premium_start)) < 14 * 24 * 60 * 60 * 1000) {
+                return {
+                    statusCode: 200,
+                    body: JSON.stringify({
+                        eligible: false,
+                        reason: 'Premium subscription must be active for at least 14 days before claiming.',
+                        checks: { hasSubscription: true, premiumDuration: false },
                     }),
                 };
             }
@@ -106,14 +129,15 @@ export async function handler(event) {
         const { count: totalMocks } = await supabase
             .from('exam_attempts')
             .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId);
+            .eq('user_id', userId)
+            .eq('is_valid_for_guarantee', true);
 
         if (totalMocks < 30) {
             return {
                 statusCode: 200,
                 body: JSON.stringify({
                     eligible: false,
-                    reason: `${totalMocks}/30 mock exams completed. Complete all 30 to be eligible.`,
+                    reason: `${totalMocks}/30 mock exams completed. Complete all 30 VALID exams to be eligible.`,
                     checks: {
                         hasSubscription: true,
                         completedMocks: false,
@@ -123,13 +147,31 @@ export async function handler(event) {
             };
         }
 
-        // 4. Calculate average of last 5 exam scores
+        // 4. Calculate average of last 5 VALID exam scores
         const { data: recentExams } = await supabase
             .from('exam_attempts')
-            .select('score, total_questions')
+            .select('score, total_questions, exam_id')
             .eq('user_id', userId)
+            .eq('is_valid_for_guarantee', true)
             .order('completed_at', { ascending: false })
             .limit(5);
+
+        // Enforce uniqueness of last 5
+        const uniqueExams = new Set(recentExams.map(e => e.exam_id));
+        if (uniqueExams.size < 5) {
+            return {
+                statusCode: 200,
+                body: JSON.stringify({
+                    eligible: false,
+                    reason: 'The last 5 exams used for your average must be unique (no repeated exams).',
+                    checks: {
+                        hasSubscription: true,
+                        completedMocks: true,
+                        uniqueExamsMet: false,
+                    },
+                }),
+            };
+        }
 
         const avgLastFive = recentExams && recentExams.length >= 5
             ? Math.round(
@@ -153,7 +195,7 @@ export async function handler(event) {
             };
         }
 
-        // 5. Check exam date is set
+        // 5. Check exam date is set and within 60 days of today
         if (!examDate) {
             return {
                 statusCode: 200,
@@ -170,6 +212,38 @@ export async function handler(event) {
             };
         }
 
+        const examDateObj = new Date(examDate);
+        const daysSinceExam = Math.floor((new Date() - examDateObj) / (1000 * 60 * 60 * 24));
+        // You cannot claim if the exam was more than 60 days ago
+        if (daysSinceExam > 60 || daysSinceExam < 0) {
+            return {
+                statusCode: 200,
+                body: JSON.stringify({
+                    eligible: false,
+                    reason: 'Guarantee claims must be for an exam taken within the last 60 days.',
+                    checks: {
+                        hasSubscription: true,
+                        completedMocks: true,
+                        averageMet: true,
+                        examDateSet: false,
+                    },
+                }),
+            };
+        }
+
+        if (!proofUrl) {
+            return {
+                statusCode: 200,
+                body: JSON.stringify({
+                    eligible: false,
+                    reason: 'A valid proof of failure (reference number or upload) is required.',
+                    checks: {
+                        hasSubscription: true, completedMocks: true, averageMet: true, examDateSet: true, proofProvided: false
+                    }
+                })
+            };
+        }
+
         // All checks passed — user is eligible
         // Insert guarantee claim
         const { error: claimError } = await supabase.from('guarantee_claims').insert({
@@ -178,6 +252,7 @@ export async function handler(event) {
             avg_last_five: avgLastFive,
             total_mocks_completed: totalMocks,
             claim_status: 'pending',
+            proof_url: proofUrl,
         });
 
         if (claimError) {

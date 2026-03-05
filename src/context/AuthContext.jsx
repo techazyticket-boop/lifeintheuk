@@ -51,6 +51,9 @@ export function AuthProvider({ children }) {
                     enrichUserProfile(session.user.id, session.user.email);
                 } else if (event === 'SIGNED_OUT') {
                     setUser(null);
+                    localStorage.removeItem(AUTH_KEY);
+                    localStorage.removeItem(SUBS_KEY);
+                    window.location.href = '/';
                 }
             }
         );
@@ -73,7 +76,7 @@ export function AuthProvider({ children }) {
             // Check subscriptions table for active subscription
             const { data: subData } = await supabase
                 .from('subscriptions')
-                .select('status, plan, current_period_end')
+                .select('status, plan, current_period_end, created_at')
                 .eq('user_id', userId)
                 .in('status', ['active', 'trialing'])
                 .order('created_at', { ascending: false })
@@ -85,10 +88,12 @@ export function AuthProvider({ children }) {
                 (!userData.premium_end || new Date(userData.premium_end) > new Date());
 
             const isPremium = hasActiveSubscription || isUserPremium;
+            const premiumStartStr = subData ? subData.created_at : userData?.premium_start;
 
             setUser(prev => prev ? {
                 ...prev,
                 isPremium,
+                premiumStart: premiumStartStr || null,
                 guaranteeClaimed: userData?.guarantee_claimed || false,
                 subscriptionPlan: subData?.plan || null,
                 subscriptionStatus: subData?.status || null,
@@ -252,6 +257,8 @@ export function AuthProvider({ children }) {
         }
         setUser(null);
         localStorage.removeItem(AUTH_KEY);
+        localStorage.removeItem(SUBS_KEY);
+        window.location.href = '/';
     };
 
     return (

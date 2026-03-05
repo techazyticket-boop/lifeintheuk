@@ -8,9 +8,6 @@ import {
     Calendar, Clock, Award, TrendingUp, Target
 } from 'lucide-react';
 
-// ─── Formspree endpoint ─────────────────────────────────────────
-const FORMSPREE_URL = 'https://formspree.io/f/YOUR_FORM_ID';
-
 // ─── Helpers ────────────────────────────────────────────────────
 function getDaysRemaining(dateStr) {
     if (!dateStr) return null;
@@ -80,7 +77,7 @@ function Milestone({ done, label, value, target, note, motivational }) {
 }
 
 // ── Claim modal ─────────────────────────────────────────────────
-function ClaimModal({ userEmail, onClose, onSuccess, examDate }) {
+function ClaimModal({ userEmail, onClose, onSuccess, examDate, submitHandler }) {
     const [name, setName] = useState('');
     const [refNo, setRefNo] = useState('');
     const [testDate, setTestDate] = useState(examDate || '');
@@ -96,27 +93,15 @@ function ClaimModal({ userEmail, onClose, onSuccess, examDate }) {
         setSubmitting(true);
         setError('');
         try {
-            const res = await fetch(FORMSPREE_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-                body: JSON.stringify({
-                    _subject: 'PassBrita Guarantee Claim',
-                    registered_email: userEmail || '(not logged in)',
-                    full_name: name,
-                    test_reference: refNo,
-                    test_date: testDate,
-                    first_attempt_confirmed: true,
-                }),
-            });
-            if (res.ok) {
+            const res = await submitHandler({ examDate: testDate, proofUrl: refNo });
+            if (res.success) {
                 setSent(true);
                 onSuccess && onSuccess();
             } else {
-                const data = await res.json();
-                setError(data?.error || 'Submission failed. Please email refund@passbrita.com directly.');
+                setError(res.reason || 'Submission failed. Please check your eligibility.');
             }
         } catch {
-            setError('Network error. Please email refund@passbrita.com directly.');
+            setError('Network error. Please try again.');
         } finally {
             setSubmitting(false);
         }
@@ -281,7 +266,7 @@ function CountdownDisplay({ days }) {
 
 // ── Main page ───────────────────────────────────────────────────
 export default function Guarantee() {
-    const { progress, getRecentAverage, isGuaranteeEligible, setExamDate, setGuaranteeClaimSubmitted } = useProgress();
+    const { progress, getRecentAverage, isGuaranteeEligible, setExamDate, setGuaranteeClaimSubmitted, submitGuaranteeClaim } = useProgress();
     const { user } = useAuth();
     const [showClaim, setShowClaim] = useState(false);
 
@@ -650,6 +635,7 @@ export default function Guarantee() {
                     onClose={() => setShowClaim(false)}
                     onSuccess={handleClaimSuccess}
                     examDate={savedExamDate}
+                    submitHandler={submitGuaranteeClaim}
                 />
             )}
         </div>

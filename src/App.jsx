@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { Shield, LogIn, LogOut, ShieldCheck, Menu, X, ArrowRight, Star, CheckCircle, Clock, BookOpen, BarChart2, Zap, Trophy } from 'lucide-react';
 
 const BRAND = 'PASSBRITA';
@@ -477,17 +477,34 @@ function Layout({ children }) {
     );
 }
 
+function ProtectedRoute({ children }) {
+    const { user, loading } = useAuth();
+    const { progress } = useProgress();
+
+    if (loading) {
+        return <div style={{ padding: 'var(--space-2xl)', textAlign: 'center', color: 'var(--text-muted)' }}>Verifying access...</div>;
+    }
+
+    const isPremium = progress.isPremium || (user && user.isPremium);
+
+    if (!user || !isPremium) {
+        return <Navigate to="/pricing" replace />;
+    }
+
+    return children;
+}
+
 function AppRoutes() {
     return (
         <Layout>
             <Routes>
                 <Route path="/" element={<Home />} />
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/study" element={<Study />} />
+                <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                <Route path="/study" element={<ProtectedRoute><Study /></ProtectedRoute>} />
                 <Route path="/admin" element={<Admin />} />
-                <Route path="/study/:id" element={<StudyMaterial />} />
-                <Route path="/exam/:id" element={<ExamViewer />} />
-                <Route path="/exams" element={<ExamsPage />} />
+                <Route path="/study/:id" element={<ProtectedRoute><StudyMaterial /></ProtectedRoute>} />
+                <Route path="/exam/:id" element={<ProtectedRoute><ExamViewer /></ProtectedRoute>} />
+                <Route path="/exams" element={<ProtectedRoute><ExamsPage /></ProtectedRoute>} />
                 <Route path="/pricing" element={<Pricing />} />
                 <Route path="/guarantee" element={<Guarantee />} />
                 <Route path="/life-in-the-uk-practice-test" element={<FreePractice />} />

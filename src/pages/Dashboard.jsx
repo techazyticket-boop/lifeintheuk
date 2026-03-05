@@ -75,7 +75,16 @@ export default function Dashboard() {
     }, [progress.examResults]);
 
     // Guarantee status
-    const guaranteeEligible = isGuaranteeEligible();
+    const premiumStart = user?.premiumStart || progress.premiumStart || null;
+    const daysSincePremium = premiumStart ? Math.floor((new Date() - new Date(premiumStart)) / (1000 * 60 * 60 * 24)) : 0;
+    const has14Days = isPremium && daysSincePremium >= 14;
+
+    const recentExamsArr = Object.entries(progress.examResults || {})
+        .sort(([, a], [, b]) => new Date(b.date) - new Date(a.date))
+        .slice(0, 5);
+    const uniqueRecentCount = new Set(recentExamsArr.map(([id]) => id)).size;
+
+    const guaranteeEligible = isGuaranteeEligible() && has14Days && uniqueRecentCount >= 5;
 
     return (
         <div className="container slide-up" style={{ padding: 'var(--space-xl) 0' }}>
@@ -161,10 +170,18 @@ export default function Dashboard() {
                     <div style={{ fontSize: '1.5rem', fontWeight: 900, lineHeight: 1, color: 'white', marginBottom: 'var(--space-sm)' }}>{guaranteeEligible ? '✓ Eligible' : 'In Progress'}</div>
 
                     {/* Progress details */}
-                    <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 6 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span>Complete 30 Mocks</span>
+                            <span>Active sub {'>'}= 14 days</span>
+                            <span style={{ color: has14Days ? 'var(--success)' : 'inherit' }}>{has14Days ? '✓' : 'Pending'}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span>30 Mocks Completed</span>
                             <span style={{ color: examsTaken >= 30 ? 'var(--success)' : 'inherit' }}>{examsTaken >= 30 ? '✓' : `${examsTaken}/30`}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span>Last 5 mocks unique</span>
+                            <span style={{ color: uniqueRecentCount >= 5 ? 'var(--success)' : 'inherit' }}>{uniqueRecentCount >= 5 ? '✓' : `${uniqueRecentCount}/5`}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                             <span>85% avg in last 5</span>

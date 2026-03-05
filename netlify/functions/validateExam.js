@@ -100,7 +100,7 @@ export async function handler(event) {
     }
 
     try {
-        const { examId, answers, userId } = JSON.parse(event.body);
+        const { examId, answers, confidences, durationSeconds, userId } = JSON.parse(event.body);
 
         if (!examId || !answers) {
             return { statusCode: 400, body: JSON.stringify({ error: 'Missing examId or answers' }) };
@@ -144,6 +144,33 @@ export async function handler(event) {
         const percentage = Math.round((score / totalQuestions) * 100);
         const hash = generateResultHash(examId, score, answers);
 
+        let isValidForGuarantee = true;
+        let invalidReason = null;
+
+        // Anti-cheat checks
+        const duration = parseInt(durationSeconds) || 0;
+        if (duration < 600) { // < 10 minutes
+            // Wait, free exams or chapter exams shouldn't be held strictly to 10 minutes for guarantee,
+            // but the guarantee only cares about regular exams anyway. Let's flag everything under 10m.
+            isValidForGuarantee = false;
+            invalidReason = 'Exam completed too quickly (< 10 minutes). Minimum time per exam is 10 minutes.';
+        } else if (duration < (totalQuestions * 10)) { // < 10 seconds per question on average
+            isValidForGuarantee = false;
+            invalidReason = 'Average time per question is suspiciously low (< 10 seconds).';
+        }
+
+        // Confidence anomaly check (High score, low confidence, fast)
+        let lowConfidenceCount = 0;
+        if (confidences) {
+            Object.values(confidences).forEach(val => {
+                if (val === 'low') lowConfidenceCount++;
+            });
+            if (percentage >= 85 && lowConfidenceCount > (totalQuestions / 2) && duration < 900) {
+                isValidForGuarantee = false;
+                invalidReason = 'Suspicious behaviour detected: High score with predominantly low confidence and fast completion time.';
+            }
+        }
+
 
         // Store in Supabase if we have credentials and a userId
         const supabase = createSupabaseAdmin();
@@ -158,6 +185,10 @@ export async function handler(event) {
                 passed,
                 topic_breakdown: topicBreakdown,
                 integrity_hash: hash,
+                duration_seconds: duration,
+                is_valid_for_guarantee: isValidForGuarantee,
+                confidence_breakdown: confidences || {},
+                invalid_reason: invalidReason,
             });
 
             if (error) {
@@ -179,6 +210,8 @@ export async function handler(event) {
                 results,
                 hash,
                 stored,
+                isValidForGuarantee,
+                invalidReason,
             }),
         };
     } catch (err) {
