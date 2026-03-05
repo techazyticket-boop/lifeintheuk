@@ -197,6 +197,16 @@ export default function Pricing() {
         }
     }, [user, hasStripeSubscription]);
 
+    // ── Validate Promo vs Selected Plan ───────────────────────
+    useEffect(() => {
+        if (appliedPromo && appliedPromo.validForPlan && appliedPromo.validForPlan !== selectedPlan) {
+            setAppliedPromo(null);
+            setPromoSuccess(false);
+            setPromoError(`Promo code removed. It is only valid for the ${appliedPromo.validForPlan} plan.`);
+            setPromoCode('');
+        }
+    }, [selectedPlan, appliedPromo]);
+
     // Already premium
     const isPremiumStatus = (user && progress.isPremium) || (user && user.isPremium) || hasStripeSubscription;
     if (isPremiumStatus) {
@@ -266,9 +276,16 @@ export default function Pricing() {
             setPromoSuccess(true);
             setTimeout(() => setStep(4), 1200);
         } else if (result.type === 'percentage') {
+            if (result.validForPlan && result.validForPlan !== selectedPlan) {
+                setPromoError(`This promo code is only valid for the ${result.validForPlan} plan.`);
+                return;
+            }
+
             setAppliedPromo({
                 promoId: result.promoId,
                 value: result.value,
+                validForPlan: result.validForPlan,
+                durationInMonths: result.durationInMonths,
                 message: result.message
             });
             setPromoSuccess(true);
@@ -295,6 +312,8 @@ export default function Pricing() {
         const result = await startCheckout(selectedPlan, {
             discountValue: appliedPromo ? appliedPromo.value : null,
             promoId: appliedPromo ? appliedPromo.promoId : null,
+            promoDurationInMonths: appliedPromo ? appliedPromo.durationInMonths : null,
+            promoValidForPlan: appliedPromo ? appliedPromo.validForPlan : null,
         });
 
         if (!result.success) {

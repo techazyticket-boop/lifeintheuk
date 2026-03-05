@@ -25,11 +25,13 @@ export default function PromoForm({ onCreated, onCancel }) {
                 value: formData.type === 'percentage' ? parseInt(formData.value) : 100,
                 max_uses: formData.max_uses ? parseInt(formData.max_uses) : null,
                 expiry_date: formData.expiry_date ? new Date(formData.expiry_date).toISOString() : null,
+                valid_for_plan: formData.type === 'percentage' && formData.valid_for_plan ? formData.valid_for_plan : null,
+                duration_in_months: formData.type === 'percentage' && formData.duration_in_months ? parseInt(formData.duration_in_months) : null,
             };
 
             await promoService.createPromo(newPromo);
             onCreated();
-            setFormData({ code: '', type: 'percentage', value: '', expiry_date: '', max_uses: '' });
+            setFormData({ code: '', type: 'percentage', value: '', expiry_date: '', max_uses: '', valid_for_plan: '', duration_in_months: '' });
         } catch (err) {
             setError(err.message || 'Failed to create promo code');
         } finally {
@@ -67,6 +69,22 @@ export default function PromoForm({ onCreated, onCancel }) {
                     <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: 'var(--space-xs)', color: 'var(--text-muted)' }}>Expiry Date (Optional)</label>
                     <input type="date" value={formData.expiry_date} onChange={e => setFormData({ ...formData, expiry_date: e.target.value })} style={{ width: '100%', padding: '10px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 'var(--radius-md)', color: 'white' }} />
                 </div>
+                {formData.type === 'percentage' && (
+                    <>
+                        <div>
+                            <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: 'var(--space-xs)', color: 'var(--text-muted)' }}>Valid for Plan</label>
+                            <select value={formData.valid_for_plan || ''} onChange={e => setFormData({ ...formData, valid_for_plan: e.target.value })} style={{ width: '100%', padding: '10px', background: 'rgba(15,23,42,1)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 'var(--radius-md)', color: 'white' }}>
+                                <option value="">Any Plan</option>
+                                <option value="monthly">Monthly Only</option>
+                                <option value="weekly">Weekly Only</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: 'var(--space-xs)', color: 'var(--text-muted)' }}>Discount Duration (Months)</label>
+                            <input type="number" min="1" max="100" value={formData.duration_in_months || ''} onChange={e => setFormData({ ...formData, duration_in_months: e.target.value })} placeholder="Leave blank for forever" style={{ width: '100%', padding: '10px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 'var(--radius-md)', color: 'white' }} />
+                        </div>
+                    </>
+                )}
                 <div>
                     <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: 'var(--space-xs)', color: 'var(--text-muted)' }}>Max Uses (Optional)</label>
                     <input type="number" min="1" value={formData.max_uses} onChange={e => setFormData({ ...formData, max_uses: e.target.value })} placeholder="Leave blank for unlimited" style={{ width: '100%', padding: '10px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 'var(--radius-md)', color: 'white' }} />

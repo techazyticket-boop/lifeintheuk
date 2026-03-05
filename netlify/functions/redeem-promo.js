@@ -114,6 +114,8 @@ export async function handler(event) {
                     type: 'percentage',
                     value: promo.value,
                     promoId: promo.id,
+                    validForPlan: promo.valid_for_plan || null,
+                    durationInMonths: promo.duration_in_months || null,
                     message: `${promo.value}% discount applied!`
                 }),
             };

@@ -36,7 +36,7 @@ export async function handler(event) {
     }
 
     try {
-        const { priceId, userId, email, successUrl, cancelUrl, discountValue, promoId } = JSON.parse(event.body);
+        const { priceId, userId, email, successUrl, cancelUrl, discountValue, promoId, promoDurationInMonths, promoValidForPlan } = JSON.parse(event.body);
 
         if (!priceId || !userId || !email) {
             return {
@@ -68,7 +68,8 @@ export async function handler(event) {
         if (discountValue) {
             const coupon = await stripe.coupons.create({
                 percent_off: discountValue,
-                duration: 'forever',
+                duration: promoDurationInMonths ? 'repeating' : 'forever',
+                duration_in_months: promoDurationInMonths ? parseInt(promoDurationInMonths) : undefined,
             });
             stripeCouponId = coupon.id;
         }

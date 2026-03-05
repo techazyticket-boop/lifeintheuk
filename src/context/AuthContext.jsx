@@ -239,7 +239,7 @@ export function AuthProvider({ children }) {
                 await refreshPremiumStatus();
             }
 
-            return { success: true, type: data.type, value: data.value, promoId: data.promoId };
+            return { success: true, type: data.type, value: data.value, promoId: data.promoId, validForPlan: data.validForPlan, durationInMonths: data.durationInMonths, message: data.message };
         } catch (err) {
             return { success: false, reason: 'Failed to verify promo code.' };
         }
