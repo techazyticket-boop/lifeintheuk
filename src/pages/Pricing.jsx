@@ -349,10 +349,15 @@ export default function Pricing() {
                     </div>
 
                     <h2 style={{ marginBottom: 'var(--space-sm)', fontSize: '1.3rem' }}>
-                        {step === 1 ? 'Step 1 — Enter your Email'
-                            : step === 2 ? 'Step 2 — Verify your Email'
-                                : step === 3 ? 'Step 3 — Choose Your Plan'
-                                    : '🎉 Subscription Active!'}
+                        {step === 4 ? '🎉 Subscription Active!' :
+                            (searchParams.get('reason') === 'free_exam' ?
+                                (step === 1 ? 'Step 1 — Create Your Free Account'
+                                    : step === 2 ? 'Step 2 — Verify Your Email'
+                                        : 'Step 3 — You\'re Good to Go!')
+                                : (step === 1 ? 'Step 1 — Enter your Email'
+                                    : step === 2 ? 'Step 2 — Verify your Email'
+                                        : 'Step 3 — Choose Your Plan'))
+                        }
                     </h2>
 
                     {step < 4 && <StepBar step={step} />}
@@ -361,7 +366,9 @@ export default function Pricing() {
                     {step === 1 && (
                         <div>
                             <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 'var(--space-md)' }}>
-                                We'll send a one-time code to verify your email. Existing subscribers are detected automatically.
+                                {searchParams.get('reason') === 'free_exam'
+                                    ? "Finish creating your account to start your free mock exam and save your results."
+                                    : "We'll send a one-time code to verify your email. Existing subscribers are detected automatically."}
                             </p>
                             <InputField icon={Mail} placeholder="your@email.com" type="email" value={email} onChange={e => setEmail(e.target.value)} error={emailError} />
                             <button className="btn btn-primary" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }} onClick={handleEmailSubmit} disabled={loading}>
@@ -447,6 +454,23 @@ export default function Pricing() {
                                     : <><CreditCard size={18} /> Subscribe — {appliedPromo ? `Discounted ${appliedPromo.value}%` : `${plan.price}/${plan.period}`}</>}
                             </button>
 
+                            {/* Alternative: Continue for free if coming from a free exam link */}
+                            {searchParams.get('reason') === 'free_exam' && searchParams.get('redirect') && (
+                                <div style={{ textAlign: 'center' }}>
+                                    <div style={{ margin: 'var(--space-md) 0', color: 'var(--text-muted)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 'var(--space-sm)' }}>
+                                        <div style={{ height: 1, background: 'var(--border-color)', flex: 1 }} />
+                                        <span>OR</span>
+                                        <div style={{ height: 1, background: 'var(--border-color)', flex: 1 }} />
+                                    </div>
+                                    <button
+                                        onClick={() => navigate(searchParams.get('redirect'))}
+                                        style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', fontSize: '0.95rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, margin: '0 auto' }}
+                                    >
+                                        Just continue to my free exam <ArrowRight size={16} />
+                                    </button>
+                                </div>
+                            )}
+
                             {/* Stripe trust badge */}
                             <div style={{
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -511,9 +535,8 @@ export default function Pricing() {
                         <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
                             {[
                                 'All 30 Mock Exams (750+ questions)',
-                                'Real exam-style questions (TRUE/FALSE, Which-is-NOT)',
+                                'Real exam-style questions',
                                 'Timed mode (45 min) + untimed Study Mode',
-                                'Complete Study Handbook (all chapters)',
                                 'Weak topic tracking & pass probability score',
                                 'Pass First Time Refund Guarantee',
                                 'Detailed explanations for every answer',

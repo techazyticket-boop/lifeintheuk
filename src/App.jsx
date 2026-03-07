@@ -11,7 +11,7 @@ import ExamViewer from './pages/ExamViewer';
 import Pricing from './pages/Pricing';
 import ExamsPage from './pages/ExamsPage';
 import Guarantee from './pages/Guarantee';
-import FreePractice from './pages/FreePractice';
+// import FreePractice from './pages/FreePractice'; // Removed in favor of /exams
 import Admin from './pages/Admin';
 import { useProgress } from './hooks/useProgress';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -63,7 +63,7 @@ function Home() {
                     </div>
 
                     <div className="flex justify-center gap-md" style={{ flexWrap: 'wrap' }}>
-                        <button onClick={() => navigate('/life-in-the-uk-practice-test')} className="btn btn-primary" style={{ padding: 'var(--space-md) var(--space-2xl)', fontSize: '1.05rem', gap: 8 }}>
+                        <button onClick={() => navigate('/exams')} className="btn btn-primary" style={{ padding: 'var(--space-md) var(--space-2xl)', fontSize: '1.05rem', gap: 8 }}>
                             <Zap size={18} /> Start Free Practice Test
                         </button>
                         <button onClick={() => navigate('/pricing')} className="btn btn-secondary" style={{ padding: 'var(--space-md) var(--space-2xl)', fontSize: '1.05rem' }}>
@@ -73,22 +73,6 @@ function Home() {
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 'var(--space-md)' }}>
                         Cancel anytime · Cheaper than the official e-learning (~£10.99 for 3 months)
                     </p>
-                </div>
-            </section>
-
-            {/* ═════════════════════════════════════════════════
-                Section 2 — Interactive Exam Preview
-            ═════════════════════════════════════════════════ */}
-            <section style={{ padding: 'var(--space-2xl) var(--space-lg)', background: 'rgba(255,255,255,0.02)' }}>
-                <div style={{ maxWidth: 640, margin: '0 auto' }}>
-                    <h2 style={{ textAlign: 'center', marginBottom: 'var(--space-xs)', fontSize: '1.6rem' }}>
-                        Try a Real Question
-                    </h2>
-                    <p style={{ textAlign: 'center', color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)' }}>
-                        This is exactly what the test looks like. Can you get it right?
-                    </p>
-
-                    <ExamPreview onStart={() => navigate('/life-in-the-uk-practice-test')} />
                 </div>
             </section>
 
@@ -238,100 +222,13 @@ function Home() {
                         Ready to Start Practising?
                     </h2>
                     <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)' }}>
-                        Try a free mock exam right now — no signup required.
+                        Take one of our free mock exams and see your score instantly.
                     </p>
-                    <button onClick={() => navigate('/life-in-the-uk-practice-test')} className="btn btn-primary" style={{ fontSize: '1.05rem', padding: 'var(--space-md) var(--space-2xl)', gap: 8 }}>
+                    <button onClick={() => navigate('/exams')} className="btn btn-primary" style={{ fontSize: '1.05rem', padding: 'var(--space-md) var(--space-2xl)', gap: 8 }}>
                         Start Free Practice Test <ArrowRight size={16} />
                     </button>
                 </div>
             </section>
-        </div>
-    );
-}
-
-// ── Interactive exam preview widget ────────────────────────────
-function ExamPreview({ onStart }) {
-    const [selected, setSelected] = useState(null);
-    const correct = 0; // TRUE
-
-    return (
-        <div className="glass-panel" style={{ padding: 'var(--space-xl)' }}>
-            <div style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                fontSize: '0.78rem', fontWeight: 700, color: 'var(--accent-primary)',
-                background: 'rgba(59,130,246,0.12)', borderRadius: 'var(--radius-pill)',
-                padding: '3px 10px', marginBottom: 'var(--space-md)',
-                border: '1px solid rgba(59,130,246,0.25)',
-            }}>
-                <BookOpen size={12} /> Sample Question
-            </div>
-
-            <h3 style={{ fontSize: '1.15rem', lineHeight: 1.5, marginBottom: 'var(--space-lg)', color: 'white' }}>
-                The UK is made up of England, Scotland, Wales and Northern Ireland.
-            </h3>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
-                {['TRUE', 'FALSE'].map((opt, i) => {
-                    const isSelected = selected === i;
-                    const answered = selected !== null;
-                    const isCorrect = i === correct;
-                    let borderColor = 'rgba(255,255,255,0.1)', bgColor = 'rgba(255,255,255,0.04)';
-                    let icon = null;
-
-                    if (answered) {
-                        if (isCorrect) {
-                            borderColor = 'var(--success)'; bgColor = 'rgba(16,185,129,0.12)';
-                            icon = <CheckCircle size={20} color="var(--success)" />;
-                        } else if (isSelected) {
-                            borderColor = 'var(--danger)'; bgColor = 'rgba(239,68,68,0.12)';
-                        }
-                    }
-
-                    return (
-                        <button key={i} onClick={() => { if (selected === null) setSelected(i); }}
-                            style={{
-                                width: '100%', display: 'flex', alignItems: 'center', gap: 'var(--space-md)',
-                                padding: 'var(--space-md) var(--space-lg)', borderRadius: 'var(--radius-md)',
-                                border: '2px solid ' + borderColor, background: bgColor,
-                                color: 'var(--text-primary)', fontSize: '0.95rem', fontWeight: 500,
-                                textAlign: 'left', cursor: answered ? 'default' : 'pointer',
-                                transition: 'all 0.15s', fontFamily: 'inherit',
-                            }}>
-                            <span style={{
-                                width: 32, height: 32, borderRadius: 'var(--radius-sm)',
-                                background: 'rgba(255,255,255,0.1)', display: 'flex',
-                                alignItems: 'center', justifyContent: 'center',
-                                fontWeight: 800, fontSize: '0.85rem', color: 'var(--text-muted)'
-                            }}>
-                                {['A', 'B'][i]}
-                            </span>
-                            <span style={{ flex: 1 }}>{opt}</span>
-                            {icon}
-                        </button>
-                    );
-                })}
-            </div>
-
-            {selected !== null && (
-                <div className="fade-in">
-                    <div style={{
-                        padding: 'var(--space-md) var(--space-lg)', background: 'rgba(59,130,246,0.07)',
-                        borderRadius: 'var(--radius-md)', border: '1px solid rgba(59,130,246,0.2)',
-                        marginBottom: 'var(--space-lg)',
-                    }}>
-                        <strong style={{ color: 'var(--accent-primary)', display: 'block', marginBottom: 4, fontSize: '0.82rem' }}>💡 Explanation</strong>
-                        <span style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-                            The United Kingdom is made up of four countries: England, Scotland, Wales, and Northern Ireland.
-                        </span>
-                    </div>
-
-                    <div style={{ textAlign: 'center' }}>
-                        <button onClick={onStart} className="btn btn-primary" style={{ gap: 6 }}>
-                            Take the Full 24-Question Test <ArrowRight size={16} />
-                        </button>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }
@@ -352,11 +249,14 @@ function Layout({ children }) {
     const isAdmin = user && user.email && user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
 
     const navLinks = [
-        { to: '/dashboard', label: 'Dashboard' },
         { to: '/exams', label: 'Exams' },
         { to: '/study', label: 'Study' },
         { to: '/guarantee', label: 'Guarantee' },
     ];
+
+    if (isPremium) {
+        navLinks.unshift({ to: '/dashboard', label: 'Dashboard' });
+    }
 
     if (isAdmin) {
         navLinks.push({ to: '/admin', label: 'Admin Portal' });
@@ -477,17 +377,34 @@ function Layout({ children }) {
     );
 }
 
-function ProtectedRoute({ children }) {
+function LoginRequired({ children }) {
     const { user, loading } = useAuth();
-    const { progress } = useProgress();
 
     if (loading) {
         return <div style={{ padding: 'var(--space-2xl)', textAlign: 'center', color: 'var(--text-muted)' }}>Verifying access...</div>;
     }
 
+    if (!user) {
+        return <Navigate to="/pricing" replace />;
+    }
+
+    return children;
+}
+
+function PaidRequired({ children }) {
+    const { user, loading } = useAuth();
+    const { progress } = useProgress();
     const isPremium = (user && progress.isPremium) || (user && user.isPremium);
 
-    if (!user || !isPremium) {
+    if (loading) {
+        return <div style={{ padding: 'var(--space-2xl)', textAlign: 'center', color: 'var(--text-muted)' }}>Verifying access...</div>;
+    }
+
+    if (!user) {
+        return <Navigate to="/pricing" replace />;
+    }
+
+    if (!isPremium) {
         return <Navigate to="/pricing" replace />;
     }
 
@@ -499,15 +416,14 @@ function AppRoutes() {
         <Layout>
             <Routes>
                 <Route path="/" element={<Home />} />
-                <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-                <Route path="/study" element={<ProtectedRoute><Study /></ProtectedRoute>} />
+                <Route path="/dashboard" element={<PaidRequired><Dashboard /></PaidRequired>} />
+                <Route path="/study" element={<Study />} />
                 <Route path="/admin" element={<Admin />} />
-                <Route path="/study/:id" element={<ProtectedRoute><StudyMaterial /></ProtectedRoute>} />
-                <Route path="/exam/:id" element={<ProtectedRoute><ExamViewer /></ProtectedRoute>} />
-                <Route path="/exams" element={<ProtectedRoute><ExamsPage /></ProtectedRoute>} />
+                <Route path="/study/:id" element={<StudyMaterial />} />
+                <Route path="/exam/:id" element={<ExamViewer />} />
+                <Route path="/exams" element={<ExamsPage />} />
                 <Route path="/pricing" element={<Pricing />} />
                 <Route path="/guarantee" element={<Guarantee />} />
-                <Route path="/life-in-the-uk-practice-test" element={<FreePractice />} />
             </Routes>
         </Layout>
     );

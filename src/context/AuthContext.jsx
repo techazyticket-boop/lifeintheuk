@@ -11,6 +11,7 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
+    const [session, setSession] = useState(null);
     const [loading, setLoading] = useState(true);
     const [pendingEmail, setPendingEmail] = useState('');
 
@@ -28,6 +29,7 @@ export function AuthProvider({ children }) {
 
         // Supabase: check current session
         supabase.auth.getSession().then(({ data: { session } }) => {
+            setSession(session);
             if (session?.user) {
                 setUser({
                     id: session.user.id,
@@ -42,6 +44,7 @@ export function AuthProvider({ children }) {
         // Listen for auth changes (magic link redirect, logout, etc.)
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (event, session) => {
+                setSession(session);
                 if (event === 'SIGNED_IN' && session?.user) {
                     setUser({
                         id: session.user.id,
@@ -223,10 +226,16 @@ export function AuthProvider({ children }) {
         }
 
         try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) return { success: false, reason: 'Session expired.' };
+
             const res = await fetch('/.netlify/functions/redeem-promo', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ code, userId: user.id }),
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session.access_token}`
+                },
+                body: JSON.stringify({ code }),
             });
 
             const data = await res.json();
@@ -266,6 +275,7 @@ export function AuthProvider({ children }) {
     return (
         <AuthContext.Provider value={{
             user,
+            session,
             loading,
             pendingEmail,
             isMockMode,

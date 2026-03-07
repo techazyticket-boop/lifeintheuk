@@ -56,7 +56,7 @@ export default function Study() {
                     const mat = studyMaterials.find(m => m.id === ch.chapId);
                     if (!mat) return null;
                     const isComplete = progress.completedChapters.includes(mat.id);
-                    const isLocked = mat.isPremium && !isPremium;
+                    const isLocked = false; // All study free for logged-in users
 
                     return (
                         <div
@@ -83,7 +83,7 @@ export default function Study() {
                             {/* Text */}
                             <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 3 }}>
-                                    {ch.label} {isLocked ? '· 🔒 Premium' : ''}
+                                    {ch.label}
                                 </div>
                                 <div style={{ fontSize: '1rem', fontWeight: 700, color: 'white', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{mat.title}</div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
@@ -115,9 +115,9 @@ export default function Study() {
             {!isPremium && (
                 <div style={{ marginTop: 'var(--space-2xl)', padding: 'var(--space-xl)', background: 'linear-gradient(135deg, rgba(59,130,246,0.08), rgba(139,92,246,0.08))', border: '1px solid rgba(139,92,246,0.25)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
                     <div style={{ fontSize: '1.6rem', marginBottom: 'var(--space-sm)' }}>🔒</div>
-                    <h3 style={{ marginBottom: 'var(--space-sm)', fontSize: '1.1rem' }}>Unlock 27 More Exams + Full Study Guide</h3>
+                    <h3 style={{ marginBottom: 'var(--space-sm)', fontSize: '1.1rem' }}>Unlock 27 More Exams + Weak Topic Tracking</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 'var(--space-lg)' }}>
-                        From £1.99/week — all 30 mocks, all 5 chapters, pass guarantee. Cancel anytime.
+                        From £1.99/week — all 30 mocks, AI tracking, pass guarantee. Cancel anytime.
                     </p>
                     <Link to="/pricing" className="btn btn-primary" style={{ padding: 'var(--space-sm) var(--space-xl)' }}>Start Your Subscription →</Link>
                 </div>

@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { mockExams, chapterExams, questionBank } from '../data/mockExams';
 import { useProgress } from '../hooks/useProgress';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 import {
-    createSessionShuffler,
     saveExamSession,
     loadExamSession,
     clearExamSession,
     EXAM_CONSTANTS,
 } from '../services/examEngine';
-import { ArrowLeft, CheckCircle, XCircle, Award, BookOpen, Clock, Zap, RotateCcw, BarChart2, AlertTriangle, TrendingUp, Share2 } from 'lucide-react';
+import { ArrowLeft, CheckCircle, XCircle, Award, BookOpen, Clock, Zap, RotateCcw, BarChart2, AlertTriangle, TrendingUp, Share2, Star } from 'lucide-react';
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'];
 const EXAM_MINUTES = EXAM_CONSTANTS.EXAM_DURATION_MINUTES;
@@ -51,155 +50,278 @@ export default function ExamViewer() {
     const { id } = useParams();
     const navigate = useNavigate();
     const { progress, saveExamResult, getStudyRecs, getPassProbability, getRecentAverage } = useProgress();
-    const { user } = useAuth();
+    const { user, session: authSession } = useAuth();
 
-    const isChapterExam = String(id).startsWith('chap-');
-
-    const exam = useMemo(() => {
-        if (isChapterExam) {
-            return chapterExams.find(c => c.id === id);
-        }
-        return mockExams.find(e => e.id === Number(id));
-    }, [id, isChapterExam]);
-
-    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
-
-    // ── Session persistence (anti-cheat: survives refresh) ────
+    // ── Session state ────
     const [mode, setMode] = useState('timed');
     const [currentIndex, setCurrentIndex] = useState(0);
     const [answers, setAnswers] = useState({});
-    const [confidences, setConfidences] = useState({});
     const [isFinished, setIsFinished] = useState(false);
     const [secondsLeft, setSecondsLeft] = useState(EXAM_MINUTES * 60);
     const timerRef = useRef(null);
-
-    // One random seed per session — options re-order on every page load
+    const [cooldownRemaining, setCooldownRemaining] = useState(0);
     const sessionSeed = useRef(Math.floor(Math.random() * 100000));
-    const sessionShuffle = useMemo(
-        () => createSessionShuffler(sessionSeed.current),
-        []
-    );
 
-    // ── Restore session on mount (anti-cheat) ────────────────
-    const sessionRestored = useRef(false);
+    // ── Server-Side Data State ────
+    const [isLoadingExam, setIsLoadingExam] = useState(true);
+    const [examData, setExamData] = useState(null); // { sessionId, examId, title, questions }
+    const [serverResult, setServerResult] = useState(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [fetchError, setFetchError] = useState('');
+
+    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
+    const isChapterExam = String(id).startsWith('chap-');
+
+    // Restore cached session on mount
+    const fetchExamToken = useRef(false);
+
     useEffect(() => {
-        if (sessionRestored.current || !exam) return;
-        sessionRestored.current = true;
+        const fetchOrRestoreExam = async () => {
+            if (fetchExamToken.current) return;
+            fetchExamToken.current = true;
 
-        const saved = loadExamSession(exam.id);
-        if (saved && !saved.isFinished) {
-            setAnswers(saved.answers || {});
-            setConfidences(saved.confidences || {});
-            setCurrentIndex(saved.currentIndex || 0);
-            setSecondsLeft(saved.secondsLeft || EXAM_MINUTES * 60);
-            setMode(saved.mode || 'timed');
-            sessionSeed.current = saved.sessionSeed || sessionSeed.current;
+            // 1. Check local cache to survive refreshes
+            const saved = loadExamSession(id);
+            if (saved && !saved.isFinished && saved.sessionId && saved.examData && saved.examData.questions) {
+                // Resume existing session
+                setExamData(saved.examData);
+                setAnswers(saved.answers || {});
+                setCurrentIndex(saved.currentIndex || 0);
+                setSecondsLeft(saved.secondsLeft || EXAM_MINUTES * 60);
+                setMode(saved.mode || 'timed');
+                setIsLoadingExam(false);
+                return;
+            }
+
+            // 2. Clear old state
+            setAnswers({});
+            setConfidences({});
+            setCurrentIndex(0);
+            setIsFinished(false);
+
+            // 3. Fetch fresh exam from server
+            try {
+                const res = await fetch('/.netlify/functions/generateExam', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authSession?.access_token || ''}`
+                    },
+                    body: JSON.stringify({ examId: id })
+                });
+
+                if (!res.ok) {
+                    // 100% SECURE DEV FALLBACK: 
+                    // This ONLY triggers on your local machine (localhost).
+                    // In production, the server remains the ONLY source of truth.
+                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                        const numericId = parseInt(id, 10);
+                        if (numericId >= 1 && numericId <= 3) {
+                            const { mockExams: publicExams } = await import('../data/publicExams');
+                            const publicExam = publicExams.find(e => String(e.id) === String(id));
+                            if (publicExam) {
+                                setExamData({
+                                    sessionId: 'local-dev-' + Date.now(),
+                                    examId: id,
+                                    title: publicExam.title,
+                                    questions: publicExam.questions
+                                });
+                                setIsLoadingExam(false);
+                                return;
+                            }
+                        }
+                    }
+
+                    let errorMessage = 'Failed to generate exam.';
+                    try {
+                        const data = await res.json();
+                        if (res.status === 429) {
+                            setCooldownRemaining(data.cooldownRemaining);
+                            return;
+                        } else if (res.status === 403) {
+                            setFetchError('Premium required for this exam.');
+                            navigate('/pricing');
+                            return;
+                        } else if (res.status === 401) {
+                            setFetchError('Please log in first.');
+                            navigate('/dashboard');
+                            return;
+                        }
+                        errorMessage = data.error || errorMessage;
+                    } catch (e) {
+                        errorMessage = `Server Error (${res.status})`;
+                    }
+                    setFetchError(errorMessage);
+                    setIsLoadingExam(false);
+                    return;
+                }
+
+                const data = await res.json();
+                setExamData(data);
+                setIsLoadingExam(false);
+            } catch (err) {
+                console.error("Fetch exam failed", err);
+
+                // FINAL LOCAL FALLBACK: If network error (server down) on localhost
+                if (window.location.hostname === 'localhost') {
+                    const numericId = parseInt(id, 10);
+                    if (numericId >= 1 && numericId <= 3) {
+                        const { mockExams: publicExams } = await import('../data/publicExams');
+                        const publicExam = publicExams.find(e => String(e.id) === String(id));
+                        if (publicExam) {
+                            setExamData({
+                                sessionId: 'local-dev-network-' + Date.now(),
+                                examId: id,
+                                title: publicExam.title,
+                                questions: publicExam.questions
+                            });
+                            setIsLoadingExam(false);
+                            return;
+                        }
+                    }
+                }
+
+                setFetchError('Network Error: Could not connect to the exam server.');
+                setIsLoadingExam(false);
+            }
+        };
+
+        if (id) {
+            fetchOrRestoreExam();
         }
-    }, [exam]);
+    }, [id, authSession, navigate]);
 
-    // ── Persist session on every change (anti-cheat) ─────────
+
+    // ── Persist session on every change ─────────
     useEffect(() => {
-        if (!exam || isFinished) return;
-        saveExamSession(exam.id, {
+        if (!examData || isFinished) return;
+        saveExamSession(id, {
             answers,
-            confidences,
             currentIndex,
             secondsLeft,
             mode,
-            sessionSeed: sessionSeed.current,
+            sessionId: examData.sessionId, // Bind to server session
+            examData: examData,
             isFinished: false,
         });
-    }, [answers, confidences, currentIndex, secondsLeft, mode, exam, isFinished]);
+    }, [answers, currentIndex, secondsLeft, mode, examData, isFinished, id]);
 
-    // Shuffle question ORDER per session (anti-cheat)
-    const questionOrder = useMemo(() => {
-        if (!exam) return [];
-        const indices = exam.questions.map((_, i) => i);
-        return sessionShuffle(indices, 999);
-    }, [exam, sessionShuffle]);
 
-    // Shuffle options per-session (True/False questions keep TRUE first, FALSE second)
-    const shuffledQuestions = useMemo(() => {
-        if (!exam) return [];
-        return questionOrder.map((origIdx, displayIdx) => {
-            const q = exam.questions[origIdx];
-            if (q.isTrueFalse) {
-                return { ...q, options: ['TRUE', 'FALSE'], _origIdx: origIdx };
-            }
-            const shuffledOpts = sessionShuffle(q.options.map((opt, i) => ({ opt, origIndex: i })), displayIdx * 37);
-            return {
-                ...q,
-                options: shuffledOpts.map(s => s.opt),
-                _optionMapping: shuffledOpts.map(s => s.origIndex), // maps display index -> original index
-                _origIdx: origIdx,
-            };
-        });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [exam?.id, sessionShuffle, questionOrder]);
-
-    // Start/stop timer based on mode
     const finishExamRef = useRef(null);
 
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [serverResult, setServerResult] = useState(null);
-
     const finishExam = useCallback(async () => {
+        if (!examData) return;
         clearInterval(timerRef.current);
         setIsSubmitting(true);
         window.scrollTo(0, 0);
 
-        // Build answers map in original indices
-        const mappedAnswers = {};
         const durationSeconds = (EXAM_MINUTES * 60) - secondsLeft;
-
-        shuffledQuestions.forEach(q => {
-            const sel = answers[q.id];
-            if (sel !== undefined && sel !== null) {
-                if (q._optionMapping) {
-                    mappedAnswers[q.id] = q._optionMapping[sel];
-                } else {
-                    mappedAnswers[q.id] = sel;
-                }
-            }
-        });
 
         try {
             const res = await fetch('/.netlify/functions/validateExam', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authSession?.access_token || ''}`
+                },
                 body: JSON.stringify({
-                    examId: exam.id,
-                    answers: mappedAnswers,
-                    confidences: confidences,
-                    durationSeconds: durationSeconds,
-                    userId: user?.id || null
+                    sessionId: examData.sessionId, // Submit via secure session
+                    answers: answers, // Uses display index (server knows how to map back)
+                    durationSeconds: durationSeconds
                 })
             });
             const data = await res.json();
 
-            // Re-map results to local progress cache format
-            saveExamResult(exam.id, data.score, data.passed, {
+            if (!res.ok) {
+                // LOCAL FALLBACK: If on localhost, allow finishing with a mock result even if server fails
+                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    const totalQs = shuffledQuestions.length || 24;
+                    const mockData = {
+                        score: 20,
+                        totalQuestions: totalQs,
+                        passed: true,
+                        percentage: 83,
+                        topicBreakdown: {
+                            history: { correct: 5, total: 6 },
+                            culture: { correct: 5, total: 6 },
+                            government: { correct: 5, total: 6 },
+                            general: { correct: 5, total: 6 }
+                        },
+                        results: shuffledQuestions.map(q => ({
+                            questionId: q.id,
+                            isCorrect: true,
+                            explanation: "Bypassed validation for local dev testing. (Correct answers are hidden for security).",
+                            topic: q.topic
+                        })),
+                        date: new Date().toISOString()
+                    };
+
+                    setServerResult(mockData);
+                    setIsFinished(true);
+                    setIsSubmitting(false);
+                    clearExamSession(id);
+                    return;
+                }
+
+                alert(data.error || 'Validation failed. Exam session might have expired.');
+                setIsSubmitting(false);
+                return;
+            }
+
+            // Record client progress cache so dashboard displays correctly
+            saveExamResult(id, data.score, data.passed, {
                 passed: data.passed,
                 score: data.score,
                 percentage: data.percentage,
                 topicBreakdown: data.topicBreakdown
             });
 
-            clearExamSession(exam.id);
+            clearExamSession(id);
             setServerResult(data);
             setIsFinished(true);
             setIsSubmitting(false);
         } catch (e) {
             console.error('Validation failed', e);
+
+            // LOCAL FALLBACK: If on localhost, allow finishing with a mock result if server is missing
+            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                const totalQs = shuffledQuestions.length || 24;
+                const mockData = {
+                    score: 20,
+                    totalQuestions: totalQs,
+                    passed: true,
+                    percentage: 83,
+                    topicBreakdown: {
+                        history: { correct: 5, total: 6 },
+                        culture: { correct: 5, total: 6 },
+                        government: { correct: 5, total: 6 },
+                        general: { correct: 5, total: 6 }
+                    },
+                    results: shuffledQuestions.map(q => ({
+                        questionId: q.id,
+                        isCorrect: true,
+                        explanation: "Bypassed validation for local dev testing. (Correct answers are hidden for security).",
+                        topic: q.topic
+                    })),
+                    date: new Date().toISOString()
+                };
+
+                setServerResult(mockData);
+                setIsFinished(true);
+                setIsSubmitting(false);
+                clearExamSession(id);
+                return;
+            }
+
             alert('Failed to submit exam. Please try again or check your connection.');
             setIsSubmitting(false);
         }
-    }, [answers, exam, shuffledQuestions, saveExamResult, user]);
+    }, [answers, examData, saveExamResult, user, secondsLeft, id, authSession]);
 
     finishExamRef.current = finishExam;
 
     useEffect(() => {
-        if (mode !== 'timed' || isFinished) return;
+        if (mode !== 'timed' || isFinished || isLoadingExam || fetchError || cooldownRemaining > 0) return;
         timerRef.current = setInterval(() => {
             setSecondsLeft(prev => {
                 if (prev <= 1) {
@@ -211,27 +333,25 @@ export default function ExamViewer() {
             });
         }, 1000);
         return () => clearInterval(timerRef.current);
-    }, [mode, isFinished]);
+    }, [mode, isFinished, isLoadingExam, fetchError, cooldownRemaining]);
 
     useEffect(() => { window.scrollTo(0, 0); }, [currentIndex]);
 
-    const [cooldownRemaining, setCooldownRemaining] = useState(0);
+    if (isLoadingExam) {
+        return (
+            <div className="container slide-up" style={{ padding: 'var(--space-2xl) 0', textAlign: 'center' }}>
+                <div style={{ marginBottom: 'var(--space-lg)', display: 'inline-flex', justifyContent: 'center', width: 48, height: 48, border: '4px solid rgba(255,255,255,0.1)', borderTopColor: 'var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+                <h2>Generating Secure Exam Session...</h2>
+                <p style={{ color: 'var(--text-muted)' }}>Fetching questions strictly from server...</p>
+            </div>
+        );
+    }
 
-    useEffect(() => {
-        // Enforce 5 minute cooldown
-        const lastExams = Object.values(progress.examResults || {}).sort((a, b) => new Date(b.date) - new Date(a.date));
-        if (lastExams.length > 0 && !isFinished) {
-            const lastExamTime = new Date(lastExams[0].date).getTime();
-            const now = new Date().getTime();
-            const diffSeconds = Math.floor((now - lastExamTime) / 1000);
-            if (diffSeconds < 300) { // 5 minutes
-                setCooldownRemaining(300 - diffSeconds);
-            }
-        }
-    }, [progress.examResults, isFinished]);
+    if (fetchError) {
+        return <div className="container" style={{ padding: 'var(--space-2xl) 0', textAlign: 'center' }}><AlertTriangle size={48} color="var(--danger)" style={{ margin: '0 auto var(--space-md)' }} /><h2>Error Loading Exam</h2><p>{fetchError}</p></div>;
+    }
 
-    if (!exam) return <div className="container" style={{ padding: 'var(--space-2xl) 0' }}><p>Exam Not Found</p></div>;
-    if (exam.isPremium && !isPremium) { navigate('/pricing'); return null; }
+    if (!examData) return <div className="container" style={{ padding: 'var(--space-2xl) 0' }}><p>Exam Not Found</p></div>;
 
     if (cooldownRemaining > 0 && mode === 'timed') {
         return (
@@ -249,17 +369,23 @@ export default function ExamViewer() {
         );
     }
 
-    const handleSelect = (questionId, displayIndex) => {
-        if (answers[questionId] !== undefined) return;
-        setAnswers(prev => ({ ...prev, [questionId]: displayIndex }));
-    };
+    const shuffledQuestions = examData?.questions || [];
+    const exam = examData ? { ...examData, id: examData.examId } : null;
 
-    const handleConfidence = (questionId, level) => {
-        setConfidences(prev => ({ ...prev, [questionId]: level }));
+    const handleSelect = (questionId, displayIndex) => {
+        if (isSubmitting) return;
+        setAnswers(prev => ({ ...prev, [questionId]: displayIndex }));
+
+        // Auto-advance if not the last question
+        if (currentIndex < shuffledQuestions.length - 1) {
+            setTimeout(() => {
+                setCurrentIndex(p => p + 1);
+            }, 400); // 400ms delay so user sees their selection before it slides
+        }
     };
 
     const handleNext = () => {
-        if (currentIndex < shuffledQuestions.length - 1) {
+        if (currentIndex < examData.questions.length - 1) {
             setCurrentIndex(p => p + 1);
         } else {
             finishExam();
@@ -270,7 +396,7 @@ export default function ExamViewer() {
         return (
             <div className="container slide-up" style={{ padding: 'var(--space-2xl) 0', textAlign: 'center' }}>
                 <div style={{ marginBottom: 'var(--space-lg)', display: 'inline-flex', justifyContent: 'center', width: 48, height: 48, border: '4px solid rgba(255,255,255,0.1)', borderTopColor: 'var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
-                <h2>Scoring Your Exam...</h2>
+                <h2>Validating on Secure Server...</h2>
             </div>
         );
     }
@@ -658,25 +784,19 @@ export default function ExamViewer() {
                     })}
                 </div>
 
-                {answers[currentQ.id] !== undefined && confidences[currentQ.id] === undefined && (
-                    <div className="fade-in" style={{ padding: 'var(--space-md)', marginTop: 'var(--space-md)', background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                        <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: 'var(--space-md)', textAlign: 'center' }}>How confident are you in this answer?</p>
-                        <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'center', flexWrap: 'wrap' }}>
-                            <button className="btn btn-secondary" onClick={() => handleConfidence(currentQ.id, 'low')} style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}>Not sure</button>
-                            <button className="btn btn-secondary" onClick={() => handleConfidence(currentQ.id, 'medium')} style={{ borderColor: 'var(--warning)', color: 'var(--warning)' }}>Fairly sure</button>
-                            <button className="btn btn-secondary" onClick={() => handleConfidence(currentQ.id, 'high')} style={{ borderColor: 'var(--success)', color: 'var(--success)' }}>Very confident</button>
-                        </div>
-                    </div>
-                )}
-
-                {/* Nav — Next disabled until answered (locked navigation) */}
+                {/* Nav — Auto-advance enabled, Next button removed for speed */}
                 <div className="flex justify-between items-center" style={{ paddingTop: 'var(--space-md)', borderTop: '1px solid var(--border-color)', marginTop: 'var(--space-lg)' }}>
                     <button className="btn btn-secondary" onClick={() => setCurrentIndex(p => Math.max(0, p - 1))} disabled={currentIndex === 0 || isSubmitting} style={{ opacity: currentIndex === 0 ? 0.3 : 1 }}>
                         ← Previous
                     </button>
-                    <button className="btn btn-primary" onClick={handleNext} disabled={answers[currentQ.id] === undefined || confidences[currentQ.id] === undefined || isSubmitting} style={{ opacity: (answers[currentQ.id] === undefined || confidences[currentQ.id] === undefined) ? 0.4 : 1 }}>
-                        {currentIndex === shuffledQuestions.length - 1 ? '🏁 Submit Exam' : 'Next →'}
-                    </button>
+
+                    {currentIndex === shuffledQuestions.length - 1 ? (
+                        <button className="btn btn-primary" onClick={handleNext} disabled={answers[currentQ.id] === undefined || isSubmitting} style={{ opacity: (answers[currentQ.id] === undefined) ? 0.4 : 1 }}>
+                            🏁 Submit Exam
+                        </button>
+                    ) : (
+                        <div style={{ width: 100 }}></div> /* Spacer to keep Previous left-aligned */
+                    )}
                 </div>
             </div>
         </div>

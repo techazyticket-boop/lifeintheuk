@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { studyMaterials } from '../data/studyMaterials';
 import { useProgress } from '../hooks/useProgress';
-import { ArrowLeft, CheckCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Play, Square, Pause } from 'lucide-react';
 
 export default function StudyMaterial() {
     const { id } = useParams();
@@ -10,45 +10,67 @@ export default function StudyMaterial() {
     const { progress, markChapterComplete } = useProgress();
     const [marked, setMarked] = useState(false);
 
+    // Audio State
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [isPaused, setIsPaused] = useState(false);
+
     const chapter = studyMaterials.find(c => c.id === id);
 
+    // Stop speaking when navigating away or changing chapters
     useEffect(() => {
+        window.speechSynthesis.cancel();
+        setIsPlaying(false);
+        setIsPaused(false);
         window.scrollTo(0, 0);
+
+        return () => {
+            window.speechSynthesis.cancel();
+        };
     }, [id]);
+
+    const playAudio = () => {
+        if (!chapter) return;
+
+        if (isPaused) {
+            window.speechSynthesis.resume();
+            setIsPaused(false);
+            setIsPlaying(true);
+            return;
+        }
+
+        // Strip HTML tags for reading
+        const textToRead = chapter.content.replace(/<[^>]*>?/gm, '');
+
+        const utterance = new SpeechSynthesisUtterance(textToRead);
+        utterance.lang = 'en-GB'; // British English accent
+        utterance.rate = 0.95; // Slightly slower for better comprehension
+
+        utterance.onend = () => {
+            setIsPlaying(false);
+            setIsPaused(false);
+        };
+
+        window.speechSynthesis.cancel(); // cancel any ongoing speech
+        window.speechSynthesis.speak(utterance);
+
+        setIsPlaying(true);
+        setIsPaused(false);
+    };
+
+    const pauseAudio = () => {
+        window.speechSynthesis.pause();
+        setIsPaused(true);
+        setIsPlaying(false);
+    };
+
+    const stopAudio = () => {
+        window.speechSynthesis.cancel();
+        setIsPlaying(false);
+        setIsPaused(false);
+    };
 
     if (!chapter) {
         return <div className="container" style={{ padding: 'var(--space-2xl) 0', textAlign: 'center' }}>Chapter Not Found</div>;
-    }
-
-    // Premium guard
-    if (chapter.isPremium && !progress.isPremium) {
-        return (
-            <div className="container slide-up" style={{ padding: 'var(--space-xl) 0', maxWidth: '800px' }}>
-                <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap', marginBottom: 'var(--space-xl)' }}>
-                    <button onClick={() => navigate('/dashboard')} className="btn btn-secondary">
-                        <ArrowLeft size={16} /> Dashboard
-                    </button>
-                    <button onClick={() => navigate('/')} className="btn btn-secondary">
-                        Home
-                    </button>
-                    {!progress.isPremium && !localStorage.getItem('user') && (
-                        <button onClick={() => navigate('/pricing')} className="btn btn-secondary" style={{ marginLeft: 'auto', border: '1px solid var(--accent-primary)', color: 'var(--accent-primary)' }}>
-                            Log In
-                        </button>
-                    )}
-                </div>
-                <div style={{ textAlign: 'center', padding: 'var(--space-2xl) var(--space-xl)', background: 'linear-gradient(135deg, rgba(59,130,246,0.08), rgba(139,92,246,0.08))', border: '1px solid rgba(139,92,246,0.25)', borderRadius: 'var(--radius-xl)' }}>
-                    <div style={{ fontSize: '3rem', marginBottom: 'var(--space-md)' }}>🔒</div>
-                    <h2 style={{ fontSize: '2rem', marginBottom: 'var(--space-sm)' }}>Unlock 27 More Exams + Full Study Guide</h2>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem', marginBottom: 'var(--space-xl)', maxWidth: 500, margin: '0 auto var(--space-xl)' }}>
-                        From £1.99/week — all 30 mocks, all 5 chapters, pass guarantee. Cancel anytime.
-                    </p>
-                    <button onClick={() => navigate('/pricing')} className="btn btn-primary" style={{ fontSize: '1.2rem', padding: 'var(--space-md) var(--space-2xl)' }}>
-                        Start Your Subscription →
-                    </button>
-                </div>
-            </div>
-        );
     }
 
     const currentIndex = studyMaterials.findIndex(c => c.id === id);
@@ -58,6 +80,7 @@ export default function StudyMaterial() {
     const handleComplete = () => {
         markChapterComplete(chapter.id);
         setMarked(true);
+        window.speechSynthesis.cancel();
         setTimeout(() => {
             if (nextChapter) {
                 navigate('/study/' + nextChapter.id);
@@ -77,8 +100,34 @@ export default function StudyMaterial() {
             </button>
 
             <div className="glass-panel fade-in">
-                <h1 style={{ fontSize: '2rem', marginBottom: 'var(--space-xs)' }}>{chapter.title}</h1>
-                <p style={{ color: 'var(--text-muted)', marginBottom: 'var(--space-xl)' }}>Estimated time: {chapter.timeToRead}</p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 'var(--space-md)' }}>
+                    <div>
+                        <h1 style={{ fontSize: '2rem', marginBottom: 'var(--space-xs)' }}>{chapter.title}</h1>
+                        <p style={{ color: 'var(--text-muted)', marginBottom: 'var(--space-lg)' }}>Estimated time: {chapter.timeToRead}</p>
+                    </div>
+
+                    {/* Audio Controls */}
+                    <div style={{
+                        display: 'flex', gap: 8, background: 'rgba(59,130,246,0.1)',
+                        padding: '8px 12px', borderRadius: 'var(--radius-md)',
+                        border: '1px solid rgba(59,130,246,0.25)'
+                    }}>
+                        {!isPlaying ? (
+                            <button onClick={playAudio} className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.85rem' }} title="Read Aloud">
+                                <Play size={16} fill="currentColor" /> {isPaused ? 'Resume' : 'Listen to Chapter'}
+                            </button>
+                        ) : (
+                            <button onClick={pauseAudio} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.85rem', borderColor: 'var(--accent-primary)', color: 'var(--accent-primary)' }} title="Pause Reading">
+                                <Pause size={16} fill="currentColor" /> Pause
+                            </button>
+                        )}
+                        {(isPlaying || isPaused) && (
+                            <button onClick={stopAudio} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.85rem' }} title="Stop Reading">
+                                <Square size={16} fill="currentColor" /> Stop
+                            </button>
+                        )}
+                    </div>
+                </div>
 
                 {/* Render HTML content securely assuming trusted local data */}
                 <div

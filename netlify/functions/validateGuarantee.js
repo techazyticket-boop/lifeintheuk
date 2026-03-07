@@ -21,18 +21,27 @@ export async function handler(event) {
     }
 
     try {
-        const { userId, examDate, proofUrl } = JSON.parse(event.body);
+        const { examDate, proofUrl } = JSON.parse(event.body);
 
-        if (!userId) {
-            return { statusCode: 400, body: JSON.stringify({ error: 'Missing userId' }) };
+        // 1. Secure JWT Authentication
+        const authHeader = event.headers.authorization;
+        if (!authHeader) {
+            return { statusCode: 401, body: JSON.stringify({ error: 'Missing authorization header' }) };
         }
-
+        const token = authHeader.replace('Bearer ', '');
         const supabase = createSupabaseAdmin();
         if (!supabase) {
-            return { statusCode: 503, body: JSON.stringify({ error: 'Service unavailable' }) };
+            return { statusCode: 503, body: JSON.stringify({ error: 'Database service unavailable' }) };
         }
 
-        // 1. Check user exists and is premium
+        const { data: { user: authUser }, error: authError } = await supabase.auth.getUser(token);
+        if (authError || !authUser) {
+            return { statusCode: 401, body: JSON.stringify({ error: 'Unauthorized or invalid token' }) };
+        }
+
+        const userId = authUser.id;
+
+        // 2. Check user exists in database and is premium
         const { data: user, error: userError } = await supabase
             .from('users')
             .select('*')
@@ -40,7 +49,7 @@ export async function handler(event) {
             .single();
 
         if (userError || !user) {
-            return { statusCode: 404, body: JSON.stringify({ error: 'User not found' }) };
+            return { statusCode: 404, body: JSON.stringify({ error: 'User profile not found' }) };
         }
 
         if (!user.is_premium) {

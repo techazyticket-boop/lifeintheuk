@@ -14,7 +14,11 @@ export default function ExamsPage() {
     return (
         <div className="container slide-up" style={{ padding: 'var(--space-xl) 0' }}>
             <div style={{ marginBottom: 'var(--space-2xl)' }}>
-                <Link to="/dashboard" style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>← Back to Dashboard</Link>
+                {isPremium ? (
+                    <Link to="/dashboard" style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>← Back to Dashboard</Link>
+                ) : (
+                    <Link to="/" style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>← Home</Link>
+                )}
                 <h2 style={{ marginTop: 'var(--space-md)', marginBottom: 'var(--space-xs)' }}>All Mock Exams</h2>
                 <p style={{ color: 'var(--text-secondary)' }}>
                     {EXAM_CONSTANTS.QUESTIONS_PER_EXAM} questions per exam · {EXAM_CONSTANTS.EXAM_DURATION_MINUTES} minutes · {EXAM_CONSTANTS.PASS_THRESHOLD}/{EXAM_CONSTANTS.QUESTIONS_PER_EXAM} to pass ({EXAM_CONSTANTS.PASS_PERCENTAGE}%)
@@ -31,7 +35,7 @@ export default function ExamsPage() {
                     return (
                         <Link
                             key={exam.id}
-                            to={isLocked ? '/pricing' : '/exam/' + exam.id}
+                            to={isLocked ? '/pricing' : (isFree ? '/exam/' + String(exam.id) : (!user ? '/pricing' : '/exam/' + String(exam.id)))}
                             style={{ textDecoration: 'none' }}
                         >
                             <div className="exam-row-card" style={{

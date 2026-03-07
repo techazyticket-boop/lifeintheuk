@@ -1,15 +1,12 @@
 // ============================================================
 // NETLIFY FUNCTION: validateExam
-// Server-side exam score calculation & storage
+// Server-side exam score calculation & secure session grading
 // POST /api/validateExam
-// Body: { examId, answers: { questionId: selectedOriginalIndex }, userId }
+// Body: { sessionId, answers: { [questionId]: displayIndex }, confidences, durationSeconds }
+// Headers: Authorization
 // ============================================================
 
 import { createClient } from '@supabase/supabase-js';
-
-// Question bank (server-side copy for validation)
-// In production, this would be in a shared module or fetched from DB
-import { questionBank } from '../../src/data/questionBank.js';
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -17,70 +14,6 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 function createSupabaseAdmin() {
     if (!supabaseUrl || !supabaseServiceKey) return null;
     return createClient(supabaseUrl, supabaseServiceKey);
-}
-
-// Deterministic seeded shuffle (must match client)
-function seededShuffle(array, seed) {
-    const arr = [...array];
-    let s = seed;
-    const rand = () => { const x = Math.sin(s++) * 10000; return x - Math.floor(x); };
-    for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(rand() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    return arr;
-}
-
-function generateExamQuestions(examId) {
-    if (String(examId).startsWith('free-')) {
-        const seed = parseInt(examId.replace('free-', ''), 10);
-        const shuffler = (arr, seed) => seededShuffle(arr, seed);
-        const indices = questionBank.map((_, i) => i);
-        const shuffled = shuffler(indices, 42); // match client
-        return shuffled.slice(0, 24).map((origIdx, i) => {
-            const q = questionBank[origIdx];
-            return {
-                id: `free-q-${i}`,
-                correctIndex: q.correctIndex,
-                topic: q.topic,
-                explanation: q.e,
-                opts: q.opts,
-            };
-        });
-    }
-
-    if (String(examId).startsWith('chap-')) {
-        const mapping = {
-            'chap-1': ['values'],
-            'chap-2': ['geography'],
-            'chap-3': ['history_early', 'history_modern', 'science'],
-            'chap-4': ['culture', 'traditions', 'sport'],
-            'chap-5': ['government']
-        };
-        const topics = mapping[examId];
-        if (!topics) return null;
-        const chapQs = questionBank.filter(q => topics.includes(q.topic));
-        const shuffled = seededShuffle(chapQs, 12345);
-        return shuffled.slice(0, 24).map((q, i) => ({
-            id: `cq-${examId}-${i}`,
-            correctIndex: q.correctIndex,
-            topic: q.topic,
-            explanation: q.e,
-            opts: q.opts,
-        }));
-    }
-
-    const numericId = parseInt(examId, 10);
-    if (isNaN(numericId) || numericId < 1 || numericId > 30) return null;
-    const seed = numericId * 997 + 13;
-    const shuffled = seededShuffle(questionBank, seed);
-    return shuffled.slice(0, 24).map((q, i) => ({
-        id: `q-${examId}-${i}`,
-        correctIndex: q.correctIndex,
-        topic: q.topic,
-        explanation: q.e,
-        opts: q.opts,
-    }));
 }
 
 function generateResultHash(examId, score, answers) {
@@ -100,29 +33,72 @@ export async function handler(event) {
     }
 
     try {
-        const { examId, answers, confidences, durationSeconds, userId } = JSON.parse(event.body);
+        const { sessionId, answers, durationSeconds } = JSON.parse(event.body);
 
-        if (!examId || !answers) {
-            return { statusCode: 400, body: JSON.stringify({ error: 'Missing examId or answers' }) };
+        if (!sessionId || !answers) {
+            return { statusCode: 400, body: JSON.stringify({ error: 'Missing sessionId or answers' }) };
         }
 
-        const questions = generateExamQuestions(examId);
-        if (!questions) {
-            return { statusCode: 400, body: JSON.stringify({ error: 'Invalid examId' }) };
+        // 1. JWT Authentication (Optional)
+        const authHeader = event.headers.authorization;
+        let user = null;
+        const supabase = createSupabaseAdmin();
+
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            const token = authHeader.replace('Bearer ', '');
+            if (token) {
+                const { data: authData, error: authError } = await supabase.auth.getUser(token);
+                if (!authError && authData?.user) {
+                    user = authData.user;
+                }
+            }
         }
+
+        // 2. Lookup Session
+        let query = supabase.from('exam_sessions').select('*').eq('session_id', sessionId);
+        if (user) {
+            query = query.eq('user_id', user.id);
+        } else {
+            query = query.is('user_id', null);
+        }
+        const { data: sessionData, error: sessionError } = await query.single();
+
+        if (sessionError || !sessionData) {
+            return { statusCode: 404, body: JSON.stringify({ error: 'Exam session not found or unauthorized. Sessions cannot be reused.' }) };
+        }
+
+        const now = new Date();
+        const expiresAt = new Date(sessionData.expires_at);
+        if (now > expiresAt) {
+            // Delete expired session
+            await supabase.from('exam_sessions').delete().eq('session_id', sessionId);
+            return { statusCode: 400, body: JSON.stringify({ error: 'Exam session expired' }) };
+        }
+
+        const questionMapping = sessionData.question_ids;
+        const examId = sessionData.exam_id;
+
+        // Ensure atomic consumption of the session (prevents replay attacks)
+        await supabase.from('exam_sessions').delete().eq('session_id', sessionId);
 
         let score = 0;
         const topicBreakdown = {};
         const results = [];
 
-        questions.forEach((q, i) => {
-            const topic = q.topic || 'general';
+        const questionIds = Object.keys(questionMapping);
+        const totalQuestions = questionIds.length;
+
+        questionIds.forEach((qId) => {
+            const mappedObj = questionMapping[qId];
+            const topic = mappedObj.topic || 'general';
             if (!topicBreakdown[topic]) topicBreakdown[topic] = { correct: 0, total: 0 };
             topicBreakdown[topic].total++;
 
-            // Client should send the question id correctly. E.g. 'free-q-12' or 'q-1-0'
-            const userAnswer = answers[q.id] !== undefined ? answers[q.id] : answers[i];
-            const isCorrect = userAnswer !== undefined && userAnswer !== null && userAnswer === q.correctIndex;
+            const displayAnswer = answers[qId];
+            // Translate display index back to original index
+            const origAnswer = displayAnswer !== undefined && displayAnswer !== null ? mappedObj.displayToOrigMap[displayAnswer] : null;
+
+            const isCorrect = origAnswer !== null && origAnswer === mappedObj.correctIndex;
 
             if (isCorrect) {
                 score++;
@@ -130,71 +106,64 @@ export async function handler(event) {
             }
 
             results.push({
-                questionId: q.id,
-                correctIndex: q.correctIndex,
-                selectedIndex: userAnswer,
+                questionId: qId,
+                correctIndex: mappedObj.correctIndex, // Still need to return the original correct index for frontend UI
+                selectedIndex: origAnswer,
                 isCorrect,
-                explanation: q.explanation,
-                topic: q.topic
+                explanation: mappedObj.explanation,
+                topic: mappedObj.topic
             });
         });
 
-        const totalQuestions = questions.length;
-        const passed = score >= Math.max(1, Math.floor(questions.length * 0.75));
+        const passed = score >= Math.max(1, Math.floor(totalQuestions * 0.75));
         const percentage = Math.round((score / totalQuestions) * 100);
         const hash = generateResultHash(examId, score, answers);
 
         let isValidForGuarantee = true;
         let invalidReason = null;
+        let fraudScore = 0.0;
+        const suspiciousFlags = [];
 
-        // Anti-cheat checks
+        // 3. Fraud Detection & Eligibility Validation
         const duration = parseInt(durationSeconds) || 0;
-        if (duration < 600) { // < 10 minutes
-            // Wait, free exams or chapter exams shouldn't be held strictly to 10 minutes for guarantee,
-            // but the guarantee only cares about regular exams anyway. Let's flag everything under 10m.
+
+        // Spam protection: Minimum 10 minutes total
+        if (duration < 600) {
             isValidForGuarantee = false;
             invalidReason = 'Exam completed too quickly (< 10 minutes). Minimum time per exam is 10 minutes.';
-        } else if (duration < (totalQuestions * 10)) { // < 10 seconds per question on average
+            fraudScore += 0.5;
+            suspiciousFlags.push('Fast Completion');
+        }
+
+        // Fast answer protection: Avg < 8 seconds per question
+        if (duration < (totalQuestions * 8)) {
             isValidForGuarantee = false;
-            invalidReason = 'Average time per question is suspiciously low (< 10 seconds).';
-        }
-
-        // Confidence anomaly check (High score, low confidence, fast)
-        let lowConfidenceCount = 0;
-        if (confidences) {
-            Object.values(confidences).forEach(val => {
-                if (val === 'low') lowConfidenceCount++;
-            });
-            if (percentage >= 85 && lowConfidenceCount > (totalQuestions / 2) && duration < 900) {
-                isValidForGuarantee = false;
-                invalidReason = 'Suspicious behaviour detected: High score with predominantly low confidence and fast completion time.';
-            }
+            invalidReason = 'Average time per question is suspiciously low (< 8 seconds).';
+            fraudScore += 0.8;
+            suspiciousFlags.push('Bot-like Speed');
         }
 
 
-        // Store in Supabase if we have credentials and a userId
-        const supabase = createSupabaseAdmin();
-        let stored = false;
 
-        if (supabase && userId) {
-            const { error } = await supabase.from('exam_attempts').insert({
-                user_id: userId,
+        // 4. Record Attempt securely on Server (Logged-in users only)
+        if (user) {
+            const { error: insertError } = await supabase.from('exam_attempts').insert({
+                user_id: user.id,
                 exam_id: String(examId),
                 score,
-                total_questions: totalQuestions,
                 passed,
                 topic_breakdown: topicBreakdown,
-                integrity_hash: hash,
                 duration_seconds: duration,
                 is_valid_for_guarantee: isValidForGuarantee,
-                confidence_breakdown: confidences || {},
+                confidence_breakdown: {},
                 invalid_reason: invalidReason,
+                fraud_score: Math.min(fraudScore, 1.0),
+                suspicious_flags: suspiciousFlags
             });
 
-            if (error) {
-                console.error('Supabase insert error:', error);
-            } else {
-                stored = true;
+            if (insertError) {
+                console.error('Supabase insert error:', insertError);
+                return { statusCode: 500, body: JSON.stringify({ error: 'Failed to record exam attempt securely' }) };
             }
         }
 
@@ -209,9 +178,9 @@ export async function handler(event) {
                 topicBreakdown,
                 results,
                 hash,
-                stored,
                 isValidForGuarantee,
                 invalidReason,
+                fraudScore
             }),
         };
     } catch (err) {

@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/buildPublicExams.js && vite",
+    "dev": "cp src/data/questionBank.js netlify/functions/questionBank.js && node scripts/buildPublicExams.js && vite",
     "validate:exams": "node scripts/validateExams.js",
-    "prebuild": "node scripts/validateExams.js && node scripts/buildPublicExams.js",
+    "prebuild": "node scripts/validateExams.js && node scripts/buildPublicExams.js && cp src/data/questionBank.js netlify/functions/questionBank.js",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"

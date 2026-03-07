@@ -32,15 +32,31 @@ export async function handler(event) {
     }
 
     try {
-        const { code, userId } = JSON.parse(event.body);
-        if (!code || !userId) {
-            return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing code or user' }) };
+        const { code } = JSON.parse(event.body);
+
+        // 1. Secure JWT Authentication
+        const authHeader = event.headers.authorization;
+        if (!authHeader) {
+            return { statusCode: 401, headers, body: JSON.stringify({ error: 'Missing authorization header' }) };
+        }
+        const token = authHeader.replace('Bearer ', '');
+        const supabase = createSupabaseAdmin();
+        if (!supabase) {
+            return { statusCode: 503, headers, body: JSON.stringify({ error: 'Database service unavailable' }) };
         }
 
-        const supabase = createSupabaseAdmin();
-        if (!supabase) throw new Error('Supabase admin client not configured');
+        const { data: { user: authUser }, error: authError } = await supabase.auth.getUser(token);
+        if (authError || !authUser) {
+            return { statusCode: 401, headers, body: JSON.stringify({ error: 'Unauthorized or invalid token' }) };
+        }
 
-        // 1. Fetch code
+        const userId = authUser.id;
+
+        if (!code) {
+            return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing promo code' }) };
+        }
+
+        // 2. Fetch code details first to determine type
         const { data: promo, error: promoError } = await supabase
             .from('promo_codes')
             .select('*')
@@ -51,7 +67,6 @@ export async function handler(event) {
             return { statusCode: 400, headers, body: JSON.stringify({ success: false, error: 'Invalid or expired promo code.' }) };
         }
 
-        // 2. Validate code
         if (promo.expiry_date && new Date(promo.expiry_date) < new Date()) {
             return { statusCode: 400, headers, body: JSON.stringify({ success: false, error: 'Promo code is expired.' }) };
         }
@@ -70,41 +85,7 @@ export async function handler(event) {
             return { statusCode: 400, headers, body: JSON.stringify({ success: false, error: 'You have already redeemed this promo code.' }) };
         }
 
-        // 4. If full access -> automatically provision
-        if (promo.type === 'full') {
-            const endDate = new Date();
-            endDate.setDate(endDate.getDate() + 30); // grant 30 days
-
-            const { error: subError } = await supabase
-                .from('subscriptions')
-                .insert({
-                    user_id: userId,
-                    status: 'active',
-                    plan: 'promo_full_access',
-                    current_period_end: endDate.toISOString(),
-                });
-
-            if (subError) throw new Error('Failed to provision access: ' + subError.message);
-
-            // Increment usage
-            await supabase
-                .from('promo_codes')
-                .update({ current_uses: (promo.current_uses || 0) + 1 })
-                .eq('id', promo.id);
-
-            // Add redemption record
-            await supabase
-                .from('promo_redemptions')
-                .insert({ promo_id: promo.id, user_id: userId });
-
-            return {
-                statusCode: 200,
-                headers,
-                body: JSON.stringify({ success: true, type: 'full', message: 'Full premium access granted!' }),
-            };
-        }
-
-        // 5. If percentage discount -> Return promo details for checkout override
+        // 4. Percentage -> Validate only (consumed during Stripe checkout)
         if (promo.type === 'percentage') {
             return {
                 statusCode: 200,
@@ -120,6 +101,41 @@ export async function handler(event) {
                 }),
             };
         }
+
+        // 5. Full Access -> Atomic RPC Consumption
+        if (promo.type === 'full') {
+            const { data: rpcData, error: rpcError } = await supabase.rpc('redeem_promo_code', {
+                p_code: code.trim(),
+                p_user_id: userId
+            });
+
+            if (rpcError || (rpcData && rpcData.error)) {
+                return { statusCode: 400, headers, body: JSON.stringify({ success: false, error: rpcData?.error || 'Atomic redemption failed.' }) };
+            }
+
+            // Provision 30 days
+            const endDate = new Date();
+            endDate.setDate(endDate.getDate() + 30);
+
+            const { error: subError } = await supabase
+                .from('subscriptions')
+                .insert({
+                    user_id: userId,
+                    status: 'active',
+                    plan: 'promo_full_access',
+                    current_period_end: endDate.toISOString(),
+                });
+
+            if (subError) throw new Error('Failed to provision access: ' + subError.message);
+
+            return {
+                statusCode: 200,
+                headers,
+                body: JSON.stringify({ success: true, type: 'full', message: 'Full premium access granted via promo!' }),
+            };
+        }
+
+        return { statusCode: 400, headers, body: JSON.stringify({ success: false, error: 'Unknown promo type' }) };
 
     } catch (err) {
         console.error('redeem-promo error:', err);

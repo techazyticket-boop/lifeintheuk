@@ -33,7 +33,23 @@ export function useProgress() {
     const [progress, setProgress] = useState(() => {
         try {
             const stored = localStorage.getItem(STORAGE_KEY);
-            return stored ? { ...defaultState, ...JSON.parse(stored) } : defaultState;
+            if (!stored) return defaultState;
+
+            const parsed = JSON.parse(stored);
+
+            // SECURITY/UX: Reset guest progress if it's older than 6 hours
+            // This prevents "stale" progress from showing for non-logged-in users
+            if (parsed.lastActivityDate) {
+                const lastUsed = new Date(parsed.lastActivityDate).getTime();
+                const now = new Date().getTime();
+                const SIX_HOURS = 6 * 60 * 60 * 1000;
+
+                if (now - lastUsed > SIX_HOURS) {
+                    return defaultState;
+                }
+            }
+
+            return { ...defaultState, ...parsed };
         } catch (e) {
             return defaultState;
         }
@@ -220,15 +236,17 @@ export function useProgress() {
      * Submit guarantee claim via server-side validation
      */
     const submitGuaranteeClaim = async ({ examDate, proofUrl }) => {
-        const userId = supabaseUser?.id;
-        if (!userId) return { success: false, reason: 'Not logged in' };
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return { success: false, reason: 'Not logged in' };
 
         try {
             const res = await fetch('/.netlify/functions/validateGuarantee', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session.access_token}`
+                },
                 body: JSON.stringify({
-                    userId,
                     examDate: examDate || progress.examDate,
                     proofUrl,
                 }),
