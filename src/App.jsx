@@ -13,12 +13,22 @@ import ExamsPage from './pages/ExamsPage';
 import Guarantee from './pages/Guarantee';
 // import FreePractice from './pages/FreePractice'; // Removed in favor of /exams
 import Admin from './pages/Admin';
+import Membership from './pages/Membership';
 import { useProgress } from './hooks/useProgress';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { useSubscription } from './hooks/useSubscription';
 
 // ── Home page (Landing page — conversion-optimized) ────────────
 function Home() {
     const navigate = useNavigate();
+    const { user, loading } = useAuth();
+
+    // Redirect logged-in users to dashboard automatically
+    useEffect(() => {
+        if (!loading && user) {
+            navigate('/dashboard', { replace: true });
+        }
+    }, [user, loading, navigate]);
 
     return (
         <div className="slide-up">
@@ -56,9 +66,9 @@ function Home() {
                     </p>
 
                     {/* Social proof */}
-                    <div style={{ display: 'flex', justifyContent: 'center', gap: 'var(--space-xl)', marginBottom: 'var(--space-xl)', flexWrap: 'wrap' }}>
-                        {['⭐⭐⭐⭐⭐ Rated 4.9/5', '🎯 30 Mock Exams', '💷 From £1.99/wk', '🛡️ Pass Guarantee'].map(s => (
-                            <span key={s} style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 500 }}>{s}</span>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, auto)', gap: 'var(--space-sm) var(--space-xl)', justifyContent: 'center', marginBottom: 'var(--space-xl)' }}>
+                        {['⭐⭐⭐⭐⭐ Rated 4.9/5', '🎯 30 Mock Exams', '💷 From £3.99/wk', '🛡️ Pass Guarantee'].map(s => (
+                            <span key={s} style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 500, textAlign: 'center' }}>{s}</span>
                         ))}
                     </div>
 
@@ -67,7 +77,7 @@ function Home() {
                             <Zap size={18} /> Start Free Practice Test
                         </button>
                         <button onClick={() => navigate('/pricing')} className="btn btn-secondary" style={{ padding: 'var(--space-md) var(--space-2xl)', fontSize: '1.05rem' }}>
-                            Go Premium — from £1.99/week
+                            Go Premium — from £3.99/week
                         </button>
                     </div>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 'var(--space-md)' }}>
@@ -164,7 +174,7 @@ function Home() {
                         <div className="glass-panel" style={{ flex: '1 1 280px', maxWidth: 340, textAlign: 'center', position: 'relative' }}>
                             <h3 style={{ fontSize: '1.1rem', marginBottom: 'var(--space-sm)' }}>Weekly</h3>
                             <div style={{ fontSize: '2.5rem', fontWeight: 900, marginBottom: 4 }}>
-                                £1.99<span style={{ fontSize: '1rem', color: 'var(--text-muted)', fontWeight: 400 }}>/week</span>
+                                £3.99<span style={{ fontSize: '1rem', color: 'var(--text-muted)', fontWeight: 400 }}>/week</span>
                             </div>
                             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: 'var(--space-lg)' }}>
                                 Perfect for short-term prep
@@ -190,7 +200,7 @@ function Home() {
                             </div>
                             <h3 style={{ fontSize: '1.1rem', marginBottom: 'var(--space-sm)' }}>Monthly</h3>
                             <div style={{ fontSize: '2.5rem', fontWeight: 900, marginBottom: 4 }}>
-                                £3.99<span style={{ fontSize: '1rem', color: 'var(--text-muted)', fontWeight: 400 }}>/month</span>
+                                £9.99<span style={{ fontSize: '1rem', color: 'var(--text-muted)', fontWeight: 400 }}>/month</span>
                             </div>
                             <p style={{ color: 'var(--accent-secondary)', fontSize: '0.85rem', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>
                                 Save 50% vs weekly
@@ -239,14 +249,18 @@ function Layout({ children }) {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
-    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
+    const { isActive: hasStripeSubscription, openCustomerPortal } = useSubscription(user?.id, user?.email);
+    const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || 'techazyticket@gmail.com';
+    const isAdmin = user && user.email && user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+    const isPremium = (user && (progress.isPremium || user.isPremium)) || hasStripeSubscription || isAdmin;
+
+    // Show management button if we are premium and NOT in local mock mode
+    const isMock = !import.meta.env.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL === 'https://your-project.supabase.co';
+    const canManageStripe = isPremium && !isMock;
     const [menuOpen, setMenuOpen] = useState(false);
 
     // Close menu on route change
     useEffect(() => { setMenuOpen(false); }, [location.pathname]);
-
-    const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || 'techazyticket@gmail.com';
-    const isAdmin = user && user.email && user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
 
     const navLinks = [
         { to: '/exams', label: 'Exams' },
@@ -289,9 +303,17 @@ function Layout({ children }) {
                             </span>
                         )}
 
+                        {canManageStripe && (
+                            <button onClick={() => navigate('/membership')} title="Manage Subscription" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: 'var(--radius-md)', padding: '3px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3, fontSize: '0.76rem', fontFamily: 'inherit', transition: 'all 0.2s', whiteSpace: 'nowrap' }}
+                                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--text-secondary)'; e.currentTarget.style.color = 'white'; }}
+                                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-color)'; e.currentTarget.style.color = 'var(--text-muted)'; }}>
+                                Manage Subscription
+                            </button>
+                        )}
+
                         {!isPremium && (
                             <Link to="/pricing" className="btn btn-primary" style={{ padding: '6px var(--space-md)', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
-                                Upgrade — from £1.99/week
+                                Upgrade — from £3.99/week
                             </Link>
                         )}
 
@@ -316,7 +338,7 @@ function Layout({ children }) {
                     </nav>
 
                     <button
-                        className="burger-btn"
+                        className="mobile-nav-toggle"
                         onClick={() => setMenuOpen(o => !o)}
                         aria-label="Toggle menu"
                         style={{ background: 'none', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '6px 8px', cursor: 'pointer', color: 'var(--text-secondary)', display: 'none', alignItems: 'center', justifyContent: 'center' }}
@@ -341,14 +363,21 @@ function Layout({ children }) {
                         ))}
 
                         {user && isPremium && (
-                            <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success)', fontWeight: 600, fontSize: '0.9rem', padding: 'var(--space-sm) 0' }}>
-                                <ShieldCheck size={15} /> Premium Member
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 'var(--space-sm) 0' }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success)', fontWeight: 600, fontSize: '0.9rem' }}>
+                                    <ShieldCheck size={15} /> Premium Member
+                                </span>
+                                {canManageStripe && (
+                                    <button onClick={() => { navigate('/membership'); setMenuOpen(false); }} title="Manage Subscription" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: 'var(--radius-md)', padding: '4px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.8rem', fontFamily: 'inherit' }}>
+                                        Manage Subscription
+                                    </button>
+                                )}
+                            </div>
                         )}
 
                         {!isPremium && (
                             <Link to="/pricing" className="btn btn-primary" style={{ textAlign: 'center', padding: 'var(--space-sm) var(--space-md)', fontSize: '0.9rem' }}>
-                                Upgrade — from £1.99/week
+                                Upgrade — from £3.99/week
                             </Link>
                         )}
 
@@ -394,7 +423,8 @@ function LoginRequired({ children }) {
 function PaidRequired({ children }) {
     const { user, loading } = useAuth();
     const { progress } = useProgress();
-    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
+    const { isActive: hasStripeSubscription } = useSubscription(user?.id, user?.email);
+    const isPremium = (user && (progress.isPremium || user.isPremium)) || hasStripeSubscription;
 
     if (loading) {
         return <div style={{ padding: 'var(--space-2xl)', textAlign: 'center', color: 'var(--text-muted)' }}>Verifying access...</div>;
@@ -417,6 +447,7 @@ function AppRoutes() {
             <Routes>
                 <Route path="/" element={<Home />} />
                 <Route path="/dashboard" element={<PaidRequired><Dashboard /></PaidRequired>} />
+                <Route path="/membership" element={<LoginRequired><Membership /></LoginRequired>} />
                 <Route path="/study" element={<Study />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="/study/:id" element={<StudyMaterial />} />

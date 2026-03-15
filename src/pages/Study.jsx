@@ -4,6 +4,7 @@ import { studyMaterials } from '../data/studyMaterials';
 import { useProgress } from '../hooks/useProgress';
 import { useAuth } from '../context/AuthContext';
 import { BookOpen, CheckCircle, Lock, Clock, ChevronRight, Play } from 'lucide-react';
+import { useSubscription } from '../hooks/useSubscription';
 
 // Map chapters to the 5 official handbook chapters
 const CHAPTERS = [
@@ -18,7 +19,8 @@ export default function Study() {
     const { progress } = useProgress();
     const { user } = useAuth();
     const navigate = useNavigate();
-    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
+    const { isActive: hasStripeSubscription } = useSubscription(user?.id, user?.email);
+    const isPremium = (user && progress.isPremium) || (user && user.isPremium) || hasStripeSubscription;
     const completedCount = progress.completedChapters.length;
     const totalCount = studyMaterials.length;
 
@@ -116,10 +118,12 @@ export default function Study() {
                 <div style={{ marginTop: 'var(--space-2xl)', padding: 'var(--space-xl)', background: 'linear-gradient(135deg, rgba(59,130,246,0.08), rgba(139,92,246,0.08))', border: '1px solid rgba(139,92,246,0.25)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
                     <div style={{ fontSize: '1.6rem', marginBottom: 'var(--space-sm)' }}>🔒</div>
                     <h3 style={{ marginBottom: 'var(--space-sm)', fontSize: '1.1rem' }}>Unlock 27 More Exams + Weak Topic Tracking</h3>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 'var(--space-lg)' }}>
-                        From £1.99/week — all 30 mocks, AI tracking, pass guarantee. Cancel anytime.
-                    </p>
-                    <Link to="/pricing" className="btn btn-primary" style={{ padding: 'var(--space-sm) var(--space-xl)' }}>Start Your Subscription →</Link>
+                    <div style={{ padding: 'var(--space-md) var(--space-xl)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', textAlign: 'center' }}>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', maxWidth: 460, margin: '0 auto' }}>
+                            From £3.99/week — all 30 mocks, AI tracking, pass guarantee. Cancel anytime.
+                        </p>
+                        <Link to="/pricing" className="btn btn-primary" style={{ padding: 'var(--space-sm) var(--space-xl)' }}>Start Your Subscription →</Link>
+                    </div>
                 </div>
             )}
         </div>

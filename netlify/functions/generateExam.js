@@ -20,7 +20,6 @@ function randomShuffle(array) {
 }
 
 function selectQuestions(examId) {
-    console.log('selectQuestions called with:', examId);
     if (!examId) return null;
     const idStr = String(examId);
 

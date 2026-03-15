@@ -264,10 +264,13 @@ function CountdownDisplay({ days }) {
     );
 }
 
+import { useSubscription } from '../hooks/useSubscription';
+
 // ── Main page ───────────────────────────────────────────────────
 export default function Guarantee() {
     const { progress, getRecentAverage, isGuaranteeEligible, setExamDate, setGuaranteeClaimSubmitted, submitGuaranteeClaim } = useProgress();
     const { user } = useAuth();
+    const { isActive: hasStripeSubscription } = useSubscription(user?.id, user?.email);
     const [showClaim, setShowClaim] = useState(false);
 
     // Scroll to top whenever modal opens so it's always fully visible
@@ -280,8 +283,9 @@ export default function Guarantee() {
     const [savedExamDate, setSavedExamDate] = useState(progress.examDate || '');
     const [dateError, setDateError] = useState('');
     const [dateSaved, setDateSaved] = useState(!!progress.examDate);
+    const [dateSavedSuccess, setDateSavedSuccess] = useState(false);
 
-    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
+    const isPremium = (user && progress.isPremium) || (user && user.isPremium) || hasStripeSubscription;
     const examsTaken = Object.keys(progress.examResults || {}).length;
     const recentAvg = getRecentAverage(5);
     const allMocksDone = examsTaken >= 30;
@@ -311,6 +315,8 @@ export default function Guarantee() {
         setSavedExamDate(examDateInput);
         setDateSaved(true);
         setExamDate && setExamDate(examDateInput);
+        setDateSavedSuccess(true);
+        setTimeout(() => setDateSavedSuccess(false), 3000);
     };
 
     // Full eligibility check
@@ -415,6 +421,12 @@ export default function Guarantee() {
                         {savedExamDate ? 'Update Date' : 'Save Date'}
                     </button>
                 </div>
+
+                {dateSavedSuccess && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'var(--space-sm)', padding: '8px 14px', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 'var(--radius-md)', color: 'var(--success)', fontSize: '0.85rem', fontWeight: 600 }}>
+                        <Check size={15} /> Exam date saved successfully!
+                    </div>
+                )}
 
                 {!savedExamDate && (
                     <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 'var(--space-sm)', display: 'flex', alignItems: 'center', gap: 6 }}>

@@ -281,7 +281,7 @@ export default function FreePractice() {
                         <Star size={32} color="var(--accent-secondary)" style={{ marginBottom: 'var(--space-md)' }} />
                         <h2 style={{ marginBottom: 'var(--space-sm)' }}>Want More Practice?</h2>
                         <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)', maxWidth: 500, margin: '0 auto var(--space-lg)' }}>
-                            Unlock 30 full mock exams, the complete study handbook, weak topic tracking, and the pass guarantee — from just £1.99/week.
+                            Unlock 30 full mock exams, the complete study handbook, weak topic tracking, and the pass guarantee — from just £3.99/week.
                         </p>
                         <div className="flex justify-center gap-md" style={{ flexWrap: 'wrap' }}>
                             <button onClick={() => setPhase('exam')} className="btn btn-primary" style={{ fontSize: '1.05rem' }}>

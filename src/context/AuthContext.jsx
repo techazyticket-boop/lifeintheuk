@@ -70,41 +70,47 @@ export function AuthProvider({ children }) {
     async function enrichUserProfile(userId, email) {
         if (isMockMode) return;
         try {
-            // Check users table
+            // 1. Fetch user profile (might be missing if trigger failed)
             const { data: userData } = await supabase
                 .from('users')
                 .select('is_premium, premium_start, premium_end, guarantee_claimed')
                 .eq('id', userId)
-                .single();
+                .maybeSingle();
 
-            // Check subscriptions table for active subscription
-            const { data: subData } = await supabase
+            // 2. Fetch latest subscription from Stripe table
+            const { data: latestSub } = await supabase
                 .from('subscriptions')
-                .select('status, plan, current_period_end, created_at')
+                .select('status, plan, current_period_end, created_at, stripe_customer_id')
                 .eq('user_id', userId)
-                .in('status', ['active', 'trialing'])
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .maybeSingle();
 
-            const hasActiveSubscription = subData?.status === 'active' || subData?.status === 'trialing';
+            const hasActiveSubscription = latestSub?.status === 'active' || latestSub?.status === 'trialing';
             const isUserPremium = userData?.is_premium &&
                 (!userData.premium_end || new Date(userData.premium_end) > new Date());
 
-            const isPremium = hasActiveSubscription || isUserPremium;
-            const premiumStartStr = subData ? subData.created_at : userData?.premium_start;
+            const ADMIN_EMAIL = 'techazyticket@gmail.com';
+            const isAdmin = email && email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
 
-            setUser(prev => prev ? {
-                ...prev,
-                isPremium,
-                premiumStart: premiumStartStr || null,
-                guaranteeClaimed: userData?.guarantee_claimed || false,
-                subscriptionPlan: subData?.plan || null,
-                subscriptionStatus: subData?.status || null,
-                subscriptionPeriodEnd: subData?.current_period_end || null,
-            } : prev);
+            const isPremium = hasActiveSubscription || isUserPremium || isAdmin;
+            const premiumStartStr = latestSub ? latestSub.created_at : userData?.premium_start;
+
+            setUser(prev => {
+                if (!prev) return null;
+                return {
+                    ...prev,
+                    isPremium,
+                    premiumStart: premiumStartStr || null,
+                    guaranteeClaimed: userData?.guarantee_claimed || false,
+                    subscriptionPlan: latestSub?.plan || null,
+                    subscriptionStatus: latestSub?.status || null,
+                    subscriptionPeriodEnd: latestSub?.current_period_end || null,
+                    stripeCustomerId: latestSub?.stripe_customer_id || null,
+                };
+            });
         } catch (err) {
-            console.warn('Failed to enrich user profile:', err);
+            console.error('Failed to enrich user profile:', err);
         }
     }
 

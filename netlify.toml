@@ -4,7 +4,8 @@
   functions = "netlify/functions"
 
 [dev]
-  command = "npm run dev"
+  command = "npm run dev:frontend"
+  framework = "#custom"
   targetPort = 5173
 
 # SPA fallback — must be LAST redirect

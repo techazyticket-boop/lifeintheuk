@@ -30,13 +30,12 @@ export function useSubscription(userId, userEmail) {
                 .select('*')
                 .eq('user_id', userId)
                 .order('created_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
+                .limit(1);
 
             if (error) {
                 console.warn('Failed to load subscription:', error);
-            } else if (data) {
-                setSubscription(data);
+            } else if (data && data.length > 0) {
+                setSubscription(data[0]);
             }
         } catch (err) {
             console.warn('Subscription load error:', err);
@@ -54,7 +53,7 @@ export function useSubscription(userId, userEmail) {
 
     const isPastDue = subscription?.status === 'past_due';
 
-    const isCanceled = subscription?.status === 'canceled';
+    const isCanceled = subscription?.status === 'canceled' || subscription?.cancel_at_period_end === true;
 
     const currentPlan = subscription?.plan || null;
 
@@ -63,18 +62,11 @@ export function useSubscription(userId, userEmail) {
         : null;
 
     const daysRemaining = periodEnd
-        ? Math.max(0, Math.ceil((periodEnd - new Date()) / (1000 * 60 * 60 * 24)))
+        ? Math.max(0, Math.ceil((periodEnd - new Date().getTime()) / (1000 * 60 * 60 * 24)))
         : null;
 
     // ── Redirect to Stripe Checkout ──────────────────────────
     const startCheckout = async (planId = 'monthly', options = {}) => {
-        const priceId = PRICE_IDS[planId];
-
-        if (!priceId) {
-            console.error(`No Stripe price ID configured for plan: ${planId}`);
-            return { success: false, error: 'Payment system not configured. Please try again later.' };
-        }
-
         if (!userId || !userEmail) {
             return { success: false, error: 'You must be logged in to subscribe.' };
         }
@@ -86,7 +78,7 @@ export function useSubscription(userId, userEmail) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    priceId,
+                    lookup_key: planId, // Using lookup_key from quickstart
                     userId,
                     email: userEmail,
                     successUrl: `${window.location.origin}/pricing?session_id={CHECKOUT_SESSION_ID}&status=success`,
@@ -97,8 +89,16 @@ export function useSubscription(userId, userEmail) {
             });
 
             if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.error || 'Checkout failed');
+                const text = await res.text();
+                let errMessage = 'Checkout failed';
+                try {
+                    const err = JSON.parse(text);
+                    errMessage = err.error || errMessage;
+                } catch (e) {
+                    console.error('Non-JSON error response from server:', text);
+                    errMessage = `Server error (${res.status}): ${text.substring(0, 100)}`;
+                }
+                throw new Error(errMessage);
             }
 
             const { url } = await res.json();
@@ -122,6 +122,79 @@ export function useSubscription(userId, userEmail) {
         await loadSubscription();
     }, [loadSubscription]);
 
+    // ── Open Stripe Customer Portal ──────────────────────────
+    const openCustomerPortal = async () => {
+        if (!userId) return { success: false, error: 'User not logged in' };
+
+        setCheckoutLoading(true);
+        try {
+            const res = await fetch('/.netlify/functions/create-portal-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId }),
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.error || 'Portal failed');
+            }
+
+            const { url } = await res.json();
+
+            // Redirect to Stripe Customer Portal
+            window.location.href = url;
+            return { success: true };
+        } catch (err) {
+            console.error('Portal error:', err);
+            setCheckoutLoading(false);
+            return { success: false, error: err.message || 'Failed to open portal' };
+        }
+    };
+
+    // ── Cancel Subscription ──────────────────────────────────
+    const cancelSubscription = async () => {
+        if (!userId) return { success: false, error: 'User not logged in' };
+        setCheckoutLoading(true);
+        try {
+            const res = await fetch('/.netlify/functions/cancel-subscription', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Cancellation failed');
+            await loadSubscription();
+            return { success: true, message: data.message };
+        } catch (err) {
+            console.error('Cancel error:', err);
+            return { success: false, error: err.message };
+        } finally {
+            setCheckoutLoading(false);
+        }
+    };
+
+    // ── Change Plan ───────────────────────────────────────────
+    const changePlan = async (newPlanId) => {
+        if (!userId) return { success: false, error: 'User not logged in' };
+        setCheckoutLoading(true);
+        try {
+            const res = await fetch('/.netlify/functions/change-plan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId, newPlanId }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Plan change failed');
+            await loadSubscription();
+            return { success: true, message: data.message };
+        } catch (err) {
+            console.error('Plan change error:', err);
+            return { success: false, error: err.message };
+        } finally {
+            setCheckoutLoading(false);
+        }
+    };
+
     return {
         subscription,
         loading,
@@ -133,6 +206,9 @@ export function useSubscription(userId, userEmail) {
         periodEnd,
         daysRemaining,
         startCheckout,
+        openCustomerPortal,
+        cancelSubscription,
+        changePlan,
         refreshSubscription,
         PRICE_IDS,
     };

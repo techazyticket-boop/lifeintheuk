@@ -124,12 +124,12 @@ export function useProgress() {
                 }));
             }
 
-            // Also load user premium status — check BOTH users table AND subscriptions
-            const { data: user } = await supabase
+            // 2. Clear progress and load user premium status — check BOTH tables
+            const { data: userRecord } = await supabase
                 .from('users')
                 .select('is_premium, guarantee_claimed')
                 .eq('id', userId)
-                .single();
+                .maybeSingle();
 
             // Check for active Stripe subscription
             const { data: activeSub } = await supabase
@@ -142,13 +142,14 @@ export function useProgress() {
 
             const hasActiveStripeSubscription = activeSub?.status === 'active' || activeSub?.status === 'trialing';
 
-            if (user || hasActiveStripeSubscription) {
-                setProgress(prev => ({
-                    ...prev,
-                    isPremium: hasActiveStripeSubscription || user?.is_premium || prev.isPremium,
-                    guaranteeClaimSubmitted: user?.guarantee_claimed || prev.guaranteeClaimSubmitted,
-                }));
-            }
+            const ADMIN_EMAIL = 'techazyticket@gmail.com';
+            const isAdmin = supabaseUser?.email && supabaseUser.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+            setProgress(prev => ({
+                ...prev,
+                isPremium: hasActiveStripeSubscription || userRecord?.is_premium || isAdmin || prev.isPremium,
+                guaranteeClaimSubmitted: userRecord?.guarantee_claimed || prev.guaranteeClaimSubmitted,
+            }));
         } catch (err) {
             console.warn('Failed to load progress from Supabase:', err);
         }

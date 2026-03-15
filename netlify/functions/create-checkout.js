@@ -36,14 +36,31 @@ export async function handler(event) {
     }
 
     try {
-        const { priceId, userId, email, successUrl, cancelUrl, discountValue, promoId, promoDurationInMonths, promoValidForPlan } = JSON.parse(event.body);
+        const { priceId, lookup_key, userId, email, successUrl, cancelUrl, discountValue, promoId, promoDurationInMonths, promoValidForPlan } = JSON.parse(event.body);
 
-        if (!priceId || !userId || !email) {
+        if ((!priceId && !lookup_key) || !userId || !email) {
             return {
                 statusCode: 400,
                 headers,
-                body: JSON.stringify({ error: 'Missing required fields: priceId, userId, email' }),
+                body: JSON.stringify({ error: 'Missing required fields: priceId or lookup_key, userId, email' }),
             };
+        }
+
+        let actualPriceId = priceId;
+
+        if (lookup_key) {
+            const prices = await stripe.prices.list({
+                lookup_keys: [lookup_key],
+                expand: ['data.product'],
+            });
+            if (prices.data.length === 0) {
+                return {
+                    statusCode: 400,
+                    headers,
+                    body: JSON.stringify({ error: `No price found for lookup key: ${lookup_key}. Please create one in Stripe Dashboard.` }),
+                };
+            }
+            actualPriceId = prices.data[0].id;
         }
 
         // Check if user already has a Stripe customer ID
@@ -80,7 +97,7 @@ export async function handler(event) {
             payment_method_types: ['card'],
             line_items: [
                 {
-                    price: priceId,
+                    price: actualPriceId,
                     quantity: 1,
                 },
             ],

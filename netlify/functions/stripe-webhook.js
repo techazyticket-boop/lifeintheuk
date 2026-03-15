@@ -33,6 +33,7 @@ function mapSubscription(subscription, customerId, userId) {
         status: subscription.status, // 'active', 'canceled', 'past_due', etc.
         plan: planLabel,
         current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+        cancel_at_period_end: subscription.cancel_at_period_end,
     };
 }
 
@@ -49,21 +50,39 @@ async function upsertSubscription(supabase, subData) {
 
     if (existing) {
         // Update existing
-        const { error } = await supabase
+        let { error } = await supabase
             .from('subscriptions')
             .update({
                 status: subData.status,
                 plan: subData.plan,
                 current_period_end: subData.current_period_end,
+                cancel_at_period_end: subData.cancel_at_period_end,
             })
             .eq('stripe_subscription_id', subData.stripe_subscription_id);
+
+        if (error && error.message?.includes('cancel_at_period_end')) {
+            const fallbackData = {
+                status: subData.status,
+                plan: subData.plan,
+                current_period_end: subData.current_period_end,
+            };
+            const retry = await supabase.from('subscriptions').update(fallbackData).eq('stripe_subscription_id', subData.stripe_subscription_id);
+            error = retry.error;
+        }
 
         if (error) console.error('Subscription update error:', error);
     } else {
         // Insert new
-        const { error } = await supabase
+        let { error } = await supabase
             .from('subscriptions')
             .insert(subData);
+
+        if (error && error.message?.includes('cancel_at_period_end')) {
+            const fallbackData = { ...subData };
+            delete fallbackData.cancel_at_period_end;
+            const retry = await supabase.from('subscriptions').insert(fallbackData);
+            error = retry.error;
+        }
 
         if (error) console.error('Subscription insert error:', error);
     }
@@ -90,12 +109,12 @@ async function syncUserPremiumStatus(supabase, userId) {
 
     const { error } = await supabase
         .from('users')
-        .update({
+        .upsert({
+            id: userId,
             is_premium: hasActive,
             premium_start: hasActive ? new Date().toISOString() : null,
             premium_end: hasActive && latestEnd ? latestEnd.toISOString() : null,
-        })
-        .eq('id', userId);
+        }, { onConflict: 'id' });
 
     if (error) console.error('User premium sync error:', error);
 }

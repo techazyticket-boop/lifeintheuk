@@ -5,11 +5,13 @@ import { useProgress } from '../hooks/useProgress';
 import { useAuth } from '../context/AuthContext';
 import { EXAM_CONSTANTS } from '../services/examEngine';
 import { CheckCircle, Lock, Play, Star } from 'lucide-react';
+import { useSubscription } from '../hooks/useSubscription';
 
 export default function ExamsPage() {
     const { progress } = useProgress();
     const { user } = useAuth();
-    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
+    const { isActive: hasStripeSubscription } = useSubscription(user?.id, user?.email);
+    const isPremium = (user && progress.isPremium) || (user && user.isPremium) || hasStripeSubscription;
 
     return (
         <div className="container slide-up" style={{ padding: 'var(--space-xl) 0' }}>
@@ -132,18 +134,11 @@ export default function ExamsPage() {
 
             {/* Premium Upsell */}
             {!isPremium && (
-                <div style={{
-                    marginTop: 'var(--space-2xl)',
-                    padding: 'var(--space-xl)',
-                    background: 'linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1))',
-                    border: '1px solid rgba(139,92,246,0.3)',
-                    borderRadius: 'var(--radius-lg)',
-                    textAlign: 'center'
-                }}>
+                <div style={{ textAlign: 'center', marginTop: 'var(--space-2xl)', padding: 'var(--space-xl)', background: 'linear-gradient(135deg, rgba(59,130,246,0.08), rgba(139,92,246,0.08))', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(139,92,246,0.2)' }}>
                     <Star size={32} color="var(--accent-secondary)" style={{ marginBottom: 'var(--space-md)' }} />
-                    <h3 style={{ marginBottom: 'var(--space-sm)' }}>Unlock All 30 Exams</h3>
-                    <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)' }}>
-                        Subscribe from £1.99/week or £3.99/month for full access to all 30 mock exams, the study handbook and the pass guarantee. Cancel anytime.
+                    <h2 style={{ marginBottom: 'var(--space-sm)' }}>Unlock All 30 Mock Exams</h2>
+                    <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)', maxWidth: 600, margin: '0 auto var(--space-lg)' }}>
+                        Subscribe from £3.99/week or £9.99/month for full access to all 30 mock exams, the study handbook and the pass guarantee. Cancel anytime.
                     </p>
                     <Link to="/pricing" className="btn btn-primary">Start Your Subscription</Link>
                 </div>

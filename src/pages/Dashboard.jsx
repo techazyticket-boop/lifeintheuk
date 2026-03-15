@@ -1,8 +1,10 @@
 import React, { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useProgress } from '../hooks/useProgress';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../hooks/useSubscription';
 import { EXAM_CONSTANTS } from '../services/examEngine';
+import { supabase, isMockMode } from '../lib/supabase';
 import {
     BarChart2, BookOpen, CheckCircle, Target, FlaskConical,
     Flame, Star, ShieldCheck, TrendingUp, Award, Zap, ArrowRight, Lock
@@ -39,13 +41,16 @@ function StatCard({ icon: Icon, iconColor, label, value, subtext, bg }) {
 }
 
 export default function Dashboard() {
+    const navigate = useNavigate();
     const {
         progress, getPassProbability, getRecentAverage, getStreak,
         getWeakTopics, getTopicMastery, getStudyRecs, getScoreHistory,
         isGuaranteeEligible, TOPIC_LABELS, EXAM_CONSTANTS: EC,
     } = useProgress();
     const { user } = useAuth();
-    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
+    const { openCustomerPortal, isActive: hasStripeSubscription } = useSubscription(user?.id, user?.email);
+    const isPremium = (user && (progress.isPremium || user.isPremium)) || hasStripeSubscription;
+    const canManageStripe = isPremium && !isMockMode;
 
     const examsTaken = Object.keys(progress.examResults || {}).length;
     const passProbability = getPassProbability();
@@ -93,6 +98,39 @@ export default function Dashboard() {
                 <h2 style={{ marginBottom: 'var(--space-xs)' }}>Your Dashboard</h2>
                 <p style={{ color: 'var(--text-secondary)' }}>Track your progress, identify weak areas, and prepare to pass first time.</p>
             </div>
+
+            {/* ── Onboarding banner for new users ── */}
+            {examsTaken === 0 && (
+                <div style={{
+                    background: 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.1))',
+                    border: '1px solid rgba(99,102,241,0.3)',
+                    borderRadius: 'var(--radius-lg)',
+                    padding: 'var(--space-xl)',
+                    marginBottom: 'var(--space-xl)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 'var(--space-lg)',
+                    flexWrap: 'wrap',
+                }}>
+                    <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                            <Zap size={20} color="var(--accent-primary)" />
+                            <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'white' }}>Welcome! Ready to start?</span>
+                        </div>
+                        <p style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.9rem' }}>
+                            Take your first mock exam to unlock your Pass Probability score and start tracking progress.
+                        </p>
+                    </div>
+                    <button
+                        onClick={() => navigate('/exams')}
+                        className="btn btn-primary"
+                        style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >
+                        Start Mock Exam 1 <ArrowRight size={16} />
+                    </button>
+                </div>
+            )}
 
             {/* ── Key Stats ── */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-md" style={{ marginBottom: 'var(--space-xl)' }}>
@@ -387,10 +425,15 @@ export default function Dashboard() {
                     ))}
                 </div>
 
-                <div style={{ marginTop: 'var(--space-lg)', textAlign: 'center' }}>
+                <div style={{ marginTop: 'var(--space-lg)', textAlign: 'center', display: 'flex', gap: 'var(--space-md)', justifyContent: 'center' }}>
                     <Link to="/guarantee" className="btn btn-secondary" style={{ gap: 6 }}>
                         {guaranteeEligible ? <><ShieldCheck size={16} /> View Guarantee</> : <>Learn More <ArrowRight size={14} /></>}
                     </Link>
+                    {canManageStripe && (
+                        <button onClick={() => navigate('/membership')} className="btn" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'white' }}>
+                            Manage Subscription
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -432,7 +475,7 @@ export default function Dashboard() {
                         <Star size={32} color="var(--accent-secondary)" style={{ marginBottom: 'var(--space-md)' }} />
                         <h3 style={{ marginBottom: 'var(--space-sm)' }}>Unlock Full Access</h3>
                         <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)' }}>
-                            Get all 30 mock exams, the complete study handbook, and the pass guarantee from just £1.99/week.
+                            Get all 30 mock exams, the complete study handbook, and the pass guarantee from just £3.99/week.
                         </p>
                         <Link to="/pricing" className="btn btn-primary">Upgrade to Premium</Link>
                     </div>

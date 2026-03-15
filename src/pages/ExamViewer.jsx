@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useProgress } from '../hooks/useProgress';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { useSubscription } from '../hooks/useSubscription';
 import {
     saveExamSession,
     loadExamSession,
@@ -36,7 +37,7 @@ function TimerBadge({ seconds, timed }) {
             padding: isLow ? '4px 8px' : '0',
             borderRadius: isLow ? 'var(--radius-md)' : '0',
             background: isCritical ? 'rgba(220, 38, 38, 0.2)' : isLow ? 'rgba(239, 68, 68, 0.15)' : 'transparent',
-            border: isLow ? `1px solid ${isCritical ? 'rgba(220,38,38,0.5)' : 'rgba(239, 68, 68, 0.3)'}` : '1px solid transparent',
+            border: isLow ? `1px solid ${isCritical ? 'rgba(220,38,38,0.5)' : 'rgba(239, 68, 68, 0.3)'} ` : '1px solid transparent',
             transition: 'all 0.3s ease',
             animation: isCritical ? 'pulse 1s infinite' : 'none',
         }}>
@@ -69,7 +70,8 @@ export default function ExamViewer() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [fetchError, setFetchError] = useState('');
 
-    const isPremium = (user && progress.isPremium) || (user && user.isPremium);
+    const { isActive: hasStripeSubscription } = useSubscription(user?.id, user?.email);
+    const isPremium = (user && progress.isPremium) || (user && user.isPremium) || hasStripeSubscription;
     const isChapterExam = String(id).startsWith('chap-');
 
     // Restore cached session on mount
@@ -95,7 +97,6 @@ export default function ExamViewer() {
 
             // 2. Clear old state
             setAnswers({});
-            setConfidences({});
             setCurrentIndex(0);
             setIsFinished(false);
 
@@ -105,7 +106,7 @@ export default function ExamViewer() {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${authSession?.access_token || ''}`
+                        'Authorization': `Bearer ${authSession?.access_token || ''} `
                     },
                     body: JSON.stringify({ examId: id })
                 });
@@ -114,7 +115,7 @@ export default function ExamViewer() {
                     // 100% SECURE DEV FALLBACK: 
                     // This ONLY triggers on your local machine (localhost).
                     // In production, the server remains the ONLY source of truth.
-                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    if (import.meta.env.DEV) {
                         const numericId = parseInt(id, 10);
                         if (numericId >= 1 && numericId <= 3) {
                             const { mockExams: publicExams } = await import('../data/publicExams');
@@ -137,19 +138,22 @@ export default function ExamViewer() {
                         const data = await res.json();
                         if (res.status === 429) {
                             setCooldownRemaining(data.cooldownRemaining);
+                            setIsLoadingExam(false);
                             return;
                         } else if (res.status === 403) {
                             setFetchError('Premium required for this exam.');
+                            setIsLoadingExam(false);
                             navigate('/pricing');
                             return;
                         } else if (res.status === 401) {
                             setFetchError('Please log in first.');
+                            setIsLoadingExam(false);
                             navigate('/dashboard');
                             return;
                         }
                         errorMessage = data.error || errorMessage;
                     } catch (e) {
-                        errorMessage = `Server Error (${res.status})`;
+                        errorMessage = `Server Error(${res.status})`;
                     }
                     setFetchError(errorMessage);
                     setIsLoadingExam(false);
@@ -163,7 +167,7 @@ export default function ExamViewer() {
                 console.error("Fetch exam failed", err);
 
                 // FINAL LOCAL FALLBACK: If network error (server down) on localhost
-                if (window.location.hostname === 'localhost') {
+                if (import.meta.env.DEV) {
                     const numericId = parseInt(id, 10);
                     if (numericId >= 1 && numericId <= 3) {
                         const { mockExams: publicExams } = await import('../data/publicExams');
@@ -222,7 +226,7 @@ export default function ExamViewer() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${authSession?.access_token || ''}`
+                    'Authorization': `Bearer ${authSession?.access_token || ''} `
                 },
                 body: JSON.stringify({
                     sessionId: examData.sessionId, // Submit via secure session
@@ -234,25 +238,35 @@ export default function ExamViewer() {
 
             if (!res.ok) {
                 // LOCAL FALLBACK: If on localhost, allow finishing with a mock result even if server fails
-                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                if (import.meta.env.DEV) {
+                    const { questionBank } = await import('../data/questionBank.js');
                     const totalQs = shuffledQuestions.length || 24;
-                    const mockData = {
-                        score: 20,
-                        totalQuestions: totalQs,
-                        passed: true,
-                        percentage: 83,
-                        topicBreakdown: {
-                            history: { correct: 5, total: 6 },
-                            culture: { correct: 5, total: 6 },
-                            government: { correct: 5, total: 6 },
-                            general: { correct: 5, total: 6 }
-                        },
-                        results: shuffledQuestions.map(q => ({
+                    let correctCount = 0;
+                    const topicBreakdown = {};
+                    const results = [];
+
+                    shuffledQuestions.forEach(q => {
+                        const bankMatch = questionBank.find(bq => bq.q === q.question);
+                        const isCorrect = bankMatch && answers[q.id] === bankMatch.correctIndex;
+                        if (isCorrect) correctCount++;
+                        if (!topicBreakdown[q.topic]) topicBreakdown[q.topic] = { correct: 0, total: 0 };
+                        topicBreakdown[q.topic].total++;
+                        if (isCorrect) topicBreakdown[q.topic].correct++;
+                        results.push({
                             questionId: q.id,
-                            isCorrect: true,
-                            explanation: "Bypassed validation for local dev testing. (Correct answers are hidden for security).",
+                            isCorrect: isCorrect,
+                            explanation: bankMatch ? bankMatch.e : "No explanation found.",
                             topic: q.topic
-                        })),
+                        });
+                    });
+
+                    const mockData = {
+                        score: correctCount,
+                        totalQuestions: totalQs,
+                        passed: correctCount >= 18,
+                        percentage: Math.round((correctCount / totalQs) * 100),
+                        topicBreakdown: topicBreakdown,
+                        results: results,
                         date: new Date().toISOString()
                     };
 
@@ -284,25 +298,35 @@ export default function ExamViewer() {
             console.error('Validation failed', e);
 
             // LOCAL FALLBACK: If on localhost, allow finishing with a mock result if server is missing
-            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            if (import.meta.env.DEV) {
+                const { questionBank } = await import('../data/questionBank.js');
                 const totalQs = shuffledQuestions.length || 24;
-                const mockData = {
-                    score: 20,
-                    totalQuestions: totalQs,
-                    passed: true,
-                    percentage: 83,
-                    topicBreakdown: {
-                        history: { correct: 5, total: 6 },
-                        culture: { correct: 5, total: 6 },
-                        government: { correct: 5, total: 6 },
-                        general: { correct: 5, total: 6 }
-                    },
-                    results: shuffledQuestions.map(q => ({
+                let correctCount = 0;
+                const topicBreakdown = {};
+                const results = [];
+
+                shuffledQuestions.forEach(q => {
+                    const bankMatch = questionBank.find(bq => bq.q === q.question);
+                    const isCorrect = bankMatch && answers[q.id] === bankMatch.correctIndex;
+                    if (isCorrect) correctCount++;
+                    if (!topicBreakdown[q.topic]) topicBreakdown[q.topic] = { correct: 0, total: 0 };
+                    topicBreakdown[q.topic].total++;
+                    if (isCorrect) topicBreakdown[q.topic].correct++;
+                    results.push({
                         questionId: q.id,
-                        isCorrect: true,
-                        explanation: "Bypassed validation for local dev testing. (Correct answers are hidden for security).",
+                        isCorrect: isCorrect,
+                        explanation: bankMatch ? bankMatch.e : "No explanation found.",
                         topic: q.topic
-                    })),
+                    });
+                });
+
+                const mockData = {
+                    score: correctCount,
+                    totalQuestions: totalQs,
+                    passed: correctCount >= 18,
+                    percentage: Math.round((correctCount / totalQs) * 100),
+                    topicBreakdown: topicBreakdown,
+                    results: results,
                     date: new Date().toISOString()
                 };
 
@@ -379,7 +403,13 @@ export default function ExamViewer() {
         // Auto-advance if not the last question
         if (currentIndex < shuffledQuestions.length - 1) {
             setTimeout(() => {
-                setCurrentIndex(p => p + 1);
+                setCurrentIndex(p => {
+                    // Make sure we only advance if we didn't manually navigate away in the 400ms window
+                    if (p < shuffledQuestions.length - 1) {
+                        return p + 1;
+                    }
+                    return p;
+                });
             }, 400); // 400ms delay so user sees their selection before it slides
         }
     };
@@ -535,7 +565,7 @@ export default function ExamViewer() {
                         }
                     }}>
                         <Share2 size={16} /> Share Your Score
-                    </button>
+                    </button >
 
                     <div className="flex gap-md justify-center" style={{ flexWrap: 'wrap' }}>
                         <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>Dashboard</button>
@@ -551,40 +581,42 @@ export default function ExamViewer() {
                             <RotateCcw size={16} /> Retry
                         </button>
                     </div>
-                </div>
+                </div >
 
                 {/* ── AI Study Recommendations ── */}
-                {studyRecs.recommendations.length > 0 && (
-                    <div className="glass-panel" style={{ marginBottom: 'var(--space-xl)', borderColor: 'rgba(139,92,246,0.3)' }}>
-                        <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-xs)', fontSize: '1.1rem' }}>
-                            <TrendingUp size={18} color="var(--accent-secondary)" /> AI Study Recommendations
-                        </h3>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: 'var(--space-md)' }}>
-                            {studyRecs.message}
-                        </p>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
-                            {studyRecs.recommendations.slice(0, 5).map((rec, i) => {
-                                const prioColor = rec.priority === 'high' ? 'var(--danger)' : rec.priority === 'medium' ? 'var(--warning)' : 'var(--success)';
-                                const prioLabel = rec.priority === 'high' ? '🔴 Focus' : rec.priority === 'medium' ? '🟡 Review' : '🟢 Strong';
-                                return (
-                                    <div key={i} style={{
-                                        padding: 'var(--space-sm) var(--space-md)',
-                                        background: `rgba(${rec.priority === 'high' ? '239,68,68' : rec.priority === 'medium' ? '245,158,11' : '16,185,129'},0.06)`,
-                                        border: `1px solid ${prioColor}33`,
-                                        borderRadius: 'var(--radius-md)',
-                                        display: 'flex', alignItems: 'center', gap: 'var(--space-md)',
-                                    }}>
-                                        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: prioColor, flexShrink: 0 }}>{prioLabel}</span>
-                                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', flex: 1 }}>{rec.action}</span>
-                                        {rec.accuracy !== undefined && (
-                                            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: prioColor, flexShrink: 0 }}>{rec.accuracy}%</span>
-                                        )}
-                                    </div>
-                                );
-                            })}
+                {
+                    studyRecs.recommendations.length > 0 && (
+                        <div className="glass-panel" style={{ marginBottom: 'var(--space-xl)', borderColor: 'rgba(139,92,246,0.3)' }}>
+                            <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-xs)', fontSize: '1.1rem' }}>
+                                <TrendingUp size={18} color="var(--accent-secondary)" /> AI Study Recommendations
+                            </h3>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: 'var(--space-md)' }}>
+                                {studyRecs.message}
+                            </p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                                {studyRecs.recommendations.slice(0, 5).map((rec, i) => {
+                                    const prioColor = rec.priority === 'high' ? 'var(--danger)' : rec.priority === 'medium' ? 'var(--warning)' : 'var(--success)';
+                                    const prioLabel = rec.priority === 'high' ? '🔴 Focus' : rec.priority === 'medium' ? '🟡 Review' : '🟢 Strong';
+                                    return (
+                                        <div key={i} style={{
+                                            padding: 'var(--space-sm) var(--space-md)',
+                                            background: `rgba(${rec.priority === 'high' ? '239,68,68' : rec.priority === 'medium' ? '245,158,11' : '16,185,129'},0.06)`,
+                                            border: `1px solid ${prioColor}33`,
+                                            borderRadius: 'var(--radius-md)',
+                                            display: 'flex', alignItems: 'center', gap: 'var(--space-md)',
+                                        }}>
+                                            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: prioColor, flexShrink: 0 }}>{prioLabel}</span>
+                                            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', flex: 1 }}>{rec.action}</span>
+                                            {rec.accuracy !== undefined && (
+                                                <span style={{ fontSize: '0.85rem', fontWeight: 700, color: prioColor, flexShrink: 0 }}>{rec.accuracy}%</span>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
-                    </div>
-                )}
+                    )
+                }
 
                 {/* ── 5-Chapter Handbook Breakdown ── */}
                 <div className="glass-panel" style={{ marginBottom: 'var(--space-xl)' }}>
@@ -697,7 +729,7 @@ export default function ExamViewer() {
                         </div>
                     )}
                 </div>
-            </div>
+            </div >
         );
     }
 
@@ -726,9 +758,19 @@ export default function ExamViewer() {
                 <div className="progress-container" style={{ height: 5 }}>
                     <div className="progress-bar" style={{ width: progressPercent + '%' }} />
                 </div>
-                {/* Answered indicator */}
+                {/* Answered indicator with quick jump */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                    <span>{Object.keys(answers).length}/{shuffledQuestions.length} answered</span>
+                    <span
+                        style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                        onClick={() => {
+                            // Find first unanswered question
+                            const firstUnanswered = shuffledQuestions.findIndex(q => answers[q.id] === undefined);
+                            if (firstUnanswered !== -1) setCurrentIndex(firstUnanswered);
+                        }}
+                        title="Click to jump to first unanswered question"
+                    >
+                        {Object.keys(answers).length}/{shuffledQuestions.length} answered
+                    </span>
                     <span>{Math.round(answeredPercent)}% complete</span>
                 </div>
             </div>
@@ -795,7 +837,9 @@ export default function ExamViewer() {
                             🏁 Submit Exam
                         </button>
                     ) : (
-                        <div style={{ width: 100 }}></div> /* Spacer to keep Previous left-aligned */
+                        <button className="btn btn-secondary" onClick={() => setCurrentIndex(p => Math.min(shuffledQuestions.length - 1, p + 1))} disabled={isSubmitting}>
+                            Skip →
+                        </button>
                     )}
                 </div>
             </div>

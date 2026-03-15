@@ -79,8 +79,8 @@ export default function Admin() {
                 const monthlyActive = activeSubsList.filter(s => s.plan === 'monthly').length;
                 const weeklyActive = activeSubsList.filter(s => s.plan === 'weekly').length;
 
-                const monthlyRev = Math.round(monthlyActive * 3.99);
-                const weeklyRev = Math.round(weeklyActive * 1.99);
+                const monthlyRev = Math.round(monthlyActive * 9.99);
+                const weeklyRev = Math.round(weeklyActive * 3.99);
 
                 setStats({
                     activeSubs: activeSubsList.length,

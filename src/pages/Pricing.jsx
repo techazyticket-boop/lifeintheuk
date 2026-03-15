@@ -14,20 +14,20 @@ const PLANS = [
     {
         id: 'weekly',
         label: 'Weekly',
-        price: '£1.99',
+        price: '£3.99',
         period: 'week',
         badge: null,
         description: 'Pay as you go — cancel anytime',
-        billingNote: 'Billed £1.99 every 7 days until cancelled',
+        billingNote: 'Billed £3.99 every 7 days until cancelled',
     },
     {
         id: 'monthly',
         label: 'Monthly',
-        price: '£3.99',
+        price: '£9.99',
         period: 'month',
         badge: 'BEST VALUE',
         description: 'Most popular — save vs. weekly',
-        billingNote: 'Billed £3.99 every 30 days until cancelled',
+        billingNote: 'Billed £9.99 every 30 days until cancelled',
     },
 ];
 
@@ -144,6 +144,7 @@ export default function Pricing() {
         currentPlan: stripePlan,
         periodEnd,
         daysRemaining,
+        openCustomerPortal,
     } = useSubscription(user?.id, user?.email);
 
     const [selectedPlan, setSelectedPlan] = useState('monthly');
@@ -169,24 +170,56 @@ export default function Pricing() {
     const [appliedPromo, setAppliedPromo] = useState(null);
 
     // ── Handle Stripe checkout return ─────────────────────────
+    const { loading: authLoading } = useAuth();
+
     useEffect(() => {
+        if (authLoading) return; // Wait for user to be fully loaded before consuming the URL parameter!
+
         const status = searchParams.get('status');
         const sessionId = searchParams.get('session_id');
 
         if (status === 'success' && sessionId) {
-            // User returned from Stripe — refresh subscription status
+            // User returned from Stripe
             setStep(4);
-            refreshSubscription();
-            if (refreshPremiumStatus) refreshPremiumStatus();
-            unlockPremium();
 
-            // Clean URL params
-            window.history.replaceState({}, '', '/pricing');
+            const finalize = () => {
+                unlockPremium();
+                navigate('/pricing', { replace: true });
+            };
+
+            // Sync with backend immediately
+            if (user && user.id) {
+                setLoading(true);
+                fetch('/.netlify/functions/sync-subscription', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId, userId: user.id }),
+                }).then(async (res) => {
+                    const data = await res.json();
+                    if (data.success) {
+                        await refreshSubscription();
+                        if (refreshPremiumStatus) await refreshPremiumStatus();
+                    } else {
+                        console.error('Sync failed:', data.error);
+                        refreshSubscription();
+                    }
+                }).catch(err => {
+                    console.error('Sync error:', err);
+                    refreshSubscription();
+                }).finally(() => {
+                    setLoading(false);
+                    finalize();
+                });
+            } else {
+                refreshSubscription();
+                if (refreshPremiumStatus) refreshPremiumStatus();
+                finalize();
+            }
         } else if (status === 'cancelled') {
             setStep(user ? 3 : 1);
-            window.history.replaceState({}, '', '/pricing');
+            navigate('/pricing', { replace: true });
         }
-    }, [searchParams]);
+    }, [searchParams, authLoading, user, refreshSubscription, refreshPremiumStatus, unlockPremium, navigate]);
 
     // ── Sync step when user state changes ─────────────────────
     useEffect(() => {
@@ -207,8 +240,26 @@ export default function Pricing() {
         }
     }, [selectedPlan, appliedPromo]);
 
+    // Loading state for checkout sync
+    if (loading && searchParams.get('session_id')) {
+        return (
+            <div className="container slide-up" style={{ textAlign: 'center', padding: 'var(--space-2xl) 0', maxWidth: 500, margin: '0 auto' }}>
+                <Loader2 size={48} className="spin" color="var(--accent-primary)" style={{ margin: '0 auto var(--space-xl)' }} />
+                <h1 style={{ marginBottom: 'var(--space-sm)' }}>Finalizing Membership...</h1>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '1.05rem' }}>
+                    We're confirming your payment with Stripe. This usually takes just 2-3 seconds.
+                </p>
+            </div>
+        );
+    }
+
     // Already premium
-    const isPremiumStatus = (user && progress.isPremium) || (user && user.isPremium) || hasStripeSubscription;
+    const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || 'techazyticket@gmail.com';
+    const isAdmin = user && user.email && user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+    const isPremiumStatus = (user && (progress.isPremium || user.isPremium)) || hasStripeSubscription || isAdmin;
+    const isMock = !import.meta.env.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL === 'https://your-project.supabase.co';
+    const canManageStripe = isPremiumStatus && !isMock;
+
     if (isPremiumStatus) {
         return (
             <div className="container slide-up" style={{ textAlign: 'center', padding: 'var(--space-2xl) 0', maxWidth: 500, margin: '0 auto' }}>
@@ -226,7 +277,17 @@ export default function Pricing() {
                 <p style={{ color: 'var(--text-secondary)', fontSize: '1.05rem', marginBottom: 'var(--space-xl)' }}>
                     Full access to all 30 mock exams, the study handbook and the pass guarantee.
                 </p>
-                <button className="btn btn-primary" onClick={() => navigate('/dashboard')}>Go to Dashboard</button>
+                <div style={{ display: 'flex', gap: 'var(--space-md)', justifyContent: 'center' }}>
+                    <button className="btn btn-primary" onClick={() => navigate('/dashboard')}>Go to Dashboard</button>
+                    {canManageStripe && (
+                        <button
+                            className="btn btn-secondary"
+                            onClick={() => navigate('/membership')}
+                        >
+                            Manage Subscription
+                        </button>
+                    )}
+                </div>
             </div>
         );
     }
@@ -562,7 +623,7 @@ export default function Pricing() {
                             </div>
                         </div>
                         {[
-                            ['Monthly price', '£3.99', '£10.99+'],
+                            ['Monthly price', '£9.99', '£10.99+'],
                             ['Mock Exams', '30', '5–10'],
                             ['Pass Guarantee', '✓', '✗'],
                             ['Cancel anytime', '✓', 'Often locked'],
