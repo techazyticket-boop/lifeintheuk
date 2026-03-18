@@ -81,7 +81,7 @@ function Home() {
                         </button>
                     </div>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 'var(--space-md)' }}>
-                        Cancel anytime · Cheaper than the official e-learning (~£10.99 for 3 months)
+                        Cancel anytime · Instant access
                     </p>
                 </div>
             </section>
