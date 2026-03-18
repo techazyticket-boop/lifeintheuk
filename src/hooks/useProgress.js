@@ -64,14 +64,14 @@ export function useProgress() {
         supabase.auth.getSession().then(({ data: { session } }) => {
             if (session?.user) {
                 setSupabaseUser(session.user);
-                loadProgressFromSupabase(session.user.id);
+                loadProgressFromSupabase(session.user.id, session.user.user_metadata);
             }
         });
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             if (session?.user) {
                 setSupabaseUser(session.user);
-                loadProgressFromSupabase(session.user.id);
+                loadProgressFromSupabase(session.user.id, session.user.user_metadata);
             } else {
                 setSupabaseUser(null);
             }
@@ -81,7 +81,7 @@ export function useProgress() {
     }, []);
 
     // Load historical results from Supabase
-    const loadProgressFromSupabase = useCallback(async (userId) => {
+    const loadProgressFromSupabase = useCallback(async (userId, userMetadata = {}) => {
         if (isMockMode || !supabase) return;
 
         try {
@@ -149,6 +149,9 @@ export function useProgress() {
                 ...prev,
                 isPremium: hasActiveStripeSubscription || userRecord?.is_premium || isAdmin || prev.isPremium,
                 guaranteeClaimSubmitted: userRecord?.guarantee_claimed || prev.guaranteeClaimSubmitted,
+                completedChapters: userMetadata.completedChapters || prev.completedChapters,
+                examDate: userMetadata.examDate || prev.examDate,
+                milestonesCompletedAt: userMetadata.milestonesCompletedAt || prev.milestonesCompletedAt,
             }));
         } catch (err) {
             console.warn('Failed to load progress from Supabase:', err);
@@ -165,7 +168,9 @@ export function useProgress() {
     const markChapterComplete = (chapterId) => {
         setProgress(p => {
             if (p.completedChapters.includes(chapterId)) return p;
-            return { ...p, completedChapters: [...p.completedChapters, chapterId] };
+            const newCompletedChapters = [...p.completedChapters, chapterId];
+            if (supabaseUser) supabase.auth.updateUser({ data: { completedChapters: newCompletedChapters } });
+            return { ...p, completedChapters: newCompletedChapters };
         });
     };
 
@@ -215,6 +220,7 @@ export function useProgress() {
 
     // ── Guarantee ────────────────────────────────────────────
     const setExamDate = (dateStr) => {
+        if (supabaseUser) supabase.auth.updateUser({ data: { examDate: dateStr } });
         setProgress(p => ({ ...p, examDate: dateStr }));
     };
 
@@ -276,9 +282,11 @@ export function useProgress() {
             calculateRecentAverage(progress.examResults || {}, EXAM_CONSTANTS.GUARANTEE_RECENT_COUNT) >= EXAM_CONSTANTS.GUARANTEE_REQUIRED_AVG &&
             !progress.milestonesCompletedAt
         ) {
-            setProgress(p => ({ ...p, milestonesCompletedAt: new Date().toISOString() }));
+            const dateStr = new Date().toISOString();
+            if (supabaseUser) supabase.auth.updateUser({ data: { milestonesCompletedAt: dateStr } });
+            setProgress(p => ({ ...p, milestonesCompletedAt: dateStr }));
         }
-    }, [progress.isPremium, taken, progress.milestonesCompletedAt]);
+    }, [progress.isPremium, taken, progress.milestonesCompletedAt, supabaseUser]);
 
     // ── Score history for charts ─────────────────────────────
     const getScoreHistory = () => {

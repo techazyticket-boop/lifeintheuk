@@ -134,13 +134,15 @@ export async function handler(event) {
     let stripeEvent;
     try {
         const sig = event.headers['stripe-signature'];
-        if (endpointSecret && sig) {
-            stripeEvent = stripe.webhooks.constructEvent(event.body, sig, endpointSecret);
-        } else {
-            // Fallback: parse without verification (dev only)
-            stripeEvent = JSON.parse(event.body);
-            console.warn('⚠️ Webhook signature not verified — missing secret or signature');
+        if (!endpointSecret) {
+            console.error('Missing Stripe Webhook Secret');
+            return { statusCode: 500, body: JSON.stringify({ error: 'Server misconfiguration' }) };
         }
+        if (!sig) {
+            console.error('Missing Stripe Signature');
+            return { statusCode: 400, body: JSON.stringify({ error: 'Missing signature' }) };
+        }
+        stripeEvent = stripe.webhooks.constructEvent(event.body, sig, endpointSecret);
     } catch (err) {
         console.error('Webhook signature verification failed:', err.message);
         return { statusCode: 400, body: JSON.stringify({ error: `Webhook Error: ${err.message}` }) };

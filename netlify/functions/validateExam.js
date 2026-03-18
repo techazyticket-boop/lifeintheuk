@@ -125,7 +125,11 @@ export async function handler(event) {
         const suspiciousFlags = [];
 
         // 3. Fraud Detection & Eligibility Validation
-        const duration = parseInt(durationSeconds) || 0;
+        const clientDuration = parseInt(durationSeconds) || 0;
+        const physicalDurationSeconds = Math.max(0, Math.floor((now.getTime() - new Date(sessionData.start_time).getTime()) / 1000));
+        
+        // Take the smaller of the two to prevent spoofing a high duration to bypass spam checks
+        const duration = Math.min(clientDuration, physicalDurationSeconds);
 
         // Spam protection: Minimum 10 minutes total
         if (duration < 600) {

@@ -106,7 +106,7 @@ export default function ExamViewer() {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${authSession?.access_token || ''} `
+                        'Authorization': `Bearer ${authSession?.access_token || ''}`
                     },
                     body: JSON.stringify({ examId: id })
                 });
@@ -226,7 +226,7 @@ export default function ExamViewer() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${authSession?.access_token || ''} `
+                    'Authorization': `Bearer ${authSession?.access_token || ''}`
                 },
                 body: JSON.stringify({
                     sessionId: examData.sessionId, // Submit via secure session
