@@ -96,11 +96,11 @@ function Home() {
                     </h2>
                     <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 'var(--space-lg)' }}>
                         {[
-                            { icon: '📊', h: '30 Mock Exams', p: '3 free to try. 30 total — matching the official difficulty spread. New question sets every attempt.' },
-                            { icon: '⏱️', h: '45-Minute Timed Mode', p: 'Simulate real exam conditions with auto-submit when time runs out. Anti-cheat prevents refresh resets.' },
-                            { icon: '🧠', h: 'AI Weak Topic Tracking', p: 'After each mock, see your topic breakdown and personalised study recommendations based on AI analysis.' },
-                            { icon: '📈', h: 'Pass Probability Score', p: 'Our algorithm gives you a live % probability of passing, based on your mock exam history and trends.' },
-                            { icon: '🛡️', h: 'Pass Guarantee', p: 'Complete all 30 mocks with ≥85% last-5 average, fail the real test — and we refund you, no questions asked.' },
+                            { icon: '📊', h: '30 Comprehensive Mock Exams', p: 'Access 3 exams for free. Premium unlocks 30 exams calibrated to official difficulty, featuring randomly generated questions on every attempt.' },
+                            { icon: '⏱️', h: '45-Minute Exam Simulation', p: 'Replicate genuine exam conditions with a strict 45-minute time limit and automatic submission to ensure reliable, exam-accurate scoring.' },
+                            { icon: '🧠', h: 'AI-Powered Topic Tracking', p: 'Receive detailed topic breakdowns after every exam, providing personalised study recommendations driven by intelligent analysis.' },
+                            { icon: '📈', h: 'Live Pass Probability', p: 'Our advanced algorithm calculates your real-time probability of passing the official exam, thoroughly measuring your historical performance and trends.' },
+                            { icon: '🛡️', h: 'First-Time Pass Guarantee', p: 'Complete 30 mock exams and achieve an average of 85% or higher across your final 5 attempts. If you fail the official test, we provide a full, unconditional refund.' },
                         ].map((f, i) => (
                             <div key={f.h} className="glass-panel fade-in" style={{ animationDelay: `${i * 0.07}s`, flex: '1 1 280px', maxWidth: '360px' }}>
                                 <div style={{ fontSize: '2rem', marginBottom: 'var(--space-sm)' }}>{f.icon}</div>
