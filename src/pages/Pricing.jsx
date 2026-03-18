@@ -199,21 +199,29 @@ export default function Pricing() {
                     if (data.success) {
                         await refreshSubscription();
                         if (refreshPremiumStatus) await refreshPremiumStatus();
+                        finalize();
                     } else {
                         console.error('Sync failed:', data.error);
                         refreshSubscription();
+                        setCheckoutError('Payment not completed or status pending. Please try again.');
+                        setStep(3);
+                        navigate('/pricing', { replace: true });
                     }
                 }).catch(err => {
                     console.error('Sync error:', err);
                     refreshSubscription();
+                    setCheckoutError('Could not verify payment status.');
+                    setStep(3);
+                    navigate('/pricing', { replace: true });
                 }).finally(() => {
                     setLoading(false);
-                    finalize();
                 });
             } else {
                 refreshSubscription();
                 if (refreshPremiumStatus) refreshPremiumStatus();
-                finalize();
+                // Safety catch: don't blindly unlock if no user exists
+                setStep(1);
+                navigate('/pricing', { replace: true });
             }
         } else if (status === 'cancelled') {
             setStep(user ? 3 : 1);
